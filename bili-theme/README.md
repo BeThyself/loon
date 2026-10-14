@@ -148,6 +148,11 @@ data.data.preload = [{ show: showItems, forcibly: true, force_show_times: 999, r
 那就别在关键路径上发请求 —— 把 `fetchSuit()` 提前到用户点衣服图标那一刻（H5 页面里，
 用户对着"正在注入装扮与预热缓存…"的 toast，完全无感），冷启动只剩纯计算，耗时归零。
 
+**后续实测（2026-10-14）**：预拉取生效后 `cached: true, ms: 0`，但「第一次冷启动不生效、第二次才生效」
+依然存在。对比两次 `/x/resource/show/skin` 的记录，**除 App 自己的 `is_free_theme` 参数（0 → 1）和时间戳外，
+两边字节级完全一致** —— 说明注入本身没问题，剩下的差异在 App 内部，代理侧再优化也没用。
+详见第七节。
+
 ## 四、为什么在 Loon 日志里找不到 console.log
 
 Loon 官方文档（新版 Script 语法）里 `with` 支持的字段：
@@ -252,3 +257,50 @@ https://app.bilibili.com/settings/theme/api/diag
 - `/x/v2/splash/brand/list` 在 Loon 上必然二选一，与 ADBlock 的 `Splash` 开关互斥。
 - `spaceBg` 默认关；Loon 插件里 `argument=[{spaceBg},{splashBg},{diagNotify}]` 传的是对象，脚本能正确读到。
 - `diagNotify` 排查完记得关，否则每次冷启动都会弹一条通知（落盘诊断不弹通知，可以一直留着）。
+
+---
+
+## 七、实测记录（2026-10-14）
+
+### 7.1 两次冷启动的 diag 对比
+
+| | 第 1 次（没生效） | 第 2 次（生效） |
+|---|---|---|
+| `is_free_theme` | **0** | **1** |
+| `cached` / `ms` | true / 0 | true / 0 |
+| `injected` | true | true |
+| `wrote` | `{id:1776138445001, ver:1776239479, pkg:"https://i0.hdslb.com/bfs/garb/zip/d9bb…", hasLoad:true}` | 完全相同 |
+| `before` | `{userEquip:null, commonEquip:null, loadEquip:null, skinColors:3, equipKeys:[]}` | 完全相同 |
+
+结论：**代理侧两次行为一致，`user_equip` 都写进去了**。App 只是第二次才愿意用。
+`is_free_theme` 0 → 1 是 App 自己状态的映射，说明它在两次之间存了东西。
+
+### 7.2 旁路流水：看 App 自己干了什么
+
+光看那四个 URL 已经看不到差异了，所以加了一条**只记录、不改写**的规则：
+
+```ini
+http-response ^https?:\/\/api\.bilibili\.com\/x\/garb\/ requires-body=1, tag=BiliTheme.garb, timeout=15
+```
+
+（同时把 `api.bilibili.com` 加进 MitM hostname。）
+
+它记录 App 是否自己去 `api.bilibili.com/x/garb/` 查装扮归属 —— 如果 App 查了 `benefit?item_id=<我们注入的 id>`
+而服务器回 `code != 0`（"你没有这个装扮"），那就是它拒绝应用的原因。
+
+流水里用 `from` 字段区分是谁发的：
+
+| `from` | 判定依据 |
+|---|---|
+| `脚本自身` | 请求带桌面 Chrome UA（BiliTheme 的 `fetchSuit` 用的） |
+| `App` | 其他 UA |
+
+记录最近 40 条，`/diag` 的 `garbTrace` 字段可以直接看。
+
+### 7.3 怎么跑这个实验
+
+1. Loon 删除「哔哩主题」插件，重新添加（改过 MitM hostname，必须重装）
+2. 彻底退出 B 站
+3. 冷启动一次，**确认皮肤没出来**
+4. 再彻底退出，冷启动一次，**确认皮肤出来了**
+5. 打开 `https://app.bilibili.com/settings/theme/api/diag`，把 `lastRuns` 和 `garbTrace` 发出来

@@ -165,14 +165,16 @@ async function prefetchSuit(itemId, ids) {
 		}
 		case "/diag": {
 			const diag = storeRead("BiliTheme.diag");
+			const trace = storeRead("BiliTheme.trace");
 			reply(200, {
 				panelVersion: VERSION,
 				theme: storeRead(STORAGE_ROOT) || null,
 				suitCache: diag?.suitCache || null,
 				runs: diag?.count ?? 0,
 				lastRuns: diag?.list || [],
+				garbTrace: trace?.list || [],
 				note: diag
-					? "lastRuns 是最近 5 次 /x/resource/show/skin 的诊断，从旧到新"
+					? "lastRuns 是最近 5 次 /x/resource/show/skin；garbTrace 是 App 与脚本对 api.bilibili.com/x/garb/ 的访问流水"
 					: "还没有诊断记录：response.js 可能是旧版（未更新），或安装后还没冷启动过哔哩哔哩",
 			});
 			return;

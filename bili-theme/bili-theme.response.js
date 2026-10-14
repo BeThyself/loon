@@ -267,6 +267,18 @@ function httpGet(url, timeoutMs = 8000) {
 	});
 }
 
+/* **************** 旁路记录：App 自己的 garb 查询 **************** */
+const TRACE_KEY = "BiliTheme.trace";
+function appendTrace(entry) {
+	try {
+		const prev = storeRead(TRACE_KEY);
+		const list = Array.isArray(prev?.list) ? prev.list : [];
+		list.push(Object.assign({ t: Date.now(), time: new Date().toISOString() }, entry));
+		while (list.length > 40) list.shift();
+		storeWrite(TRACE_KEY, { list });
+	} catch {}
+}
+
 /* **************** 注入: 原生衣服图标接管 **************** */
 const DETAIL_INJECT_SNIPPET = `<style id="bili-theme-inject-style">
 .bt-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);background:rgba(20,20,20,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.15);color:#fff;padding:13px 20px;border-radius:14px;z-index:1000000;pointer-events:none;opacity:0;transition:all .22s cubic-bezier(.2,.8,.2,1);box-shadow:0 8px 32px rgba(0,0,0,.45);text-align:center;width:max-content;max-width:92vw;box-sizing:border-box}
@@ -812,6 +824,25 @@ async function injectSplashResponse(data, skinConfig) {
 	const path = u.pathname;
 	const settings = getSettings();
 
+	/* 0. 旁路记录：App 自己是否去 api.bilibili.com 查装扮（只记录，绝不改写） */
+	if (u.hostname === "api.bilibili.com" && path.startsWith("/x/garb/")) {
+		const ua = String($request.headers?.["User-Agent"] || $request.headers?.["user-agent"] || "");
+		let j = null;
+		try { j = JSON.parse($response.body); } catch {}
+		appendTrace({
+			hit: "garb",
+			// 脚本自身发的请求带桌面 Chrome UA，App 发的是自己的 UA —— 用它区分
+			from: /Windows NT|Chrome\/120/.test(ua) ? "脚本自身" : "App",
+			ua: ua.slice(0, 48),
+			path,
+			itemId: u.searchParams.get("item_id"),
+			code: j?.code ?? null,
+			hasData: !!j?.data,
+		});
+		$done({});
+		return;
+	}
+
 	/* 1. 官方装扮商城详情页 HTML 注入（衣服图标接管 + 双行 Toast） */
 	if (u.hostname === "www.bilibili.com" && (path.includes("/h5/mall/digital-card/home") || path.includes("/h5/mall/suit/detail"))) {
 		const raw = typeof $response.body === "string" ? $response.body : "";
@@ -851,7 +882,7 @@ async function injectSplashResponse(data, skinConfig) {
 		const wrote = modified ? {
 			id: data.data?.user_equip?.id ?? null,
 			ver: data.data?.user_equip?.ver ?? null,
-			pkg: String(data.data?.user_equip?.package_url || "").slice(0, 72),
+			pkg: String(data.data?.user_equip?.package_url || ""),
 			hasLoad: !!data.data?.load_equip,
 		} : null;
 		saveDiag({

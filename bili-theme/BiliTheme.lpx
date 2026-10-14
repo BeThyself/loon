@@ -14,8 +14,10 @@ splashBg = switch, true, tag=开屏画面装扮注入, desc=开启后将装扮�
 [Script]
 # 详情页注入按钮 + 皮肤/加载动画/开屏画面/空间头图（响应改写）
 http-response ^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\?|$) requires-body=1, argument=[{spaceBg}, {splashBg}, {diagNotify}], script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.response, timeout=30
+# 旁路记录：App 自己是否去 api.bilibili.com 查装扮归属（只记录，不改写）
+http-response ^https?:\/\/api\.bilibili\.com\/x\/garb\/ requires-body=1, script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.garb, timeout=15
 # 主题配置持久化 API
 http-request ^https?:\/\/app\.bilibili\.com\/settings\/theme(\/|\?|$) requires-body=1, script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.panel.js, tag=BiliTheme.api, timeout=20
 
 [MitM]
-hostname = app.bilibili.com, www.bilibili.com
+hostname = app.bilibili.com, www.bilibili.com, api.bilibili.com
