@@ -1,7 +1,10 @@
 # 哔哩主题（bili-theme）— 原理与 Loon 兼容性笔记
 
 上游：[chaoscard/bili-theme](https://github.com/chaoscard/bili-theme) v3.2.1
-本目录：`BiliTheme.lpx`（script-path 已改指向本仓库）+ 两个脚本（内容与上游 dist 一致）
+本目录：`BiliTheme.lpx`（script-path 已改指向本仓库，**timeout 已从 10 提到 30**）+ 两个脚本
+（`bili-theme.response.js` 做了**多部件并发拉取**改造，其余逻辑与上游一致）
+
+实测环境：Loon + `Biliverse/Enhanced` v0.6.1 + `Biliverse/ADBlock` v0.7.3
 
 ---
 
@@ -50,76 +53,99 @@ App 原生请求 ----------------------------------------------+
 
 ---
 
-## 二、Loon 上的冲突点（与去广告插件）
+## 二、与 Biliverse ADBlock / Enhanced 的实测冲突分析
 
-流行的 B 站去广告 Loon 插件（Maasea / 可莉 / kokoryh 一系）含有以下规则，
-**与 BiliTheme 命中完全相同的 URL**：
+### 2.1 逐条比对结果
+
+**Biliverse ADBlock v0.7.3** 的 16 条脚本规则里，**只有一条**与 BiliTheme 重叠：
 
 ```ini
-[Rewrite]
-^https:\/\/app\.bilibili\.com\/x\/resource\/show\/skin\? response-body-json-del data.common_equip
-^https:\/\/app\.bilibili\.com\/x\/resource\/ip reject-dict
-
-[Script]
-http-response ^https:\/\/app\.bilibili\.com\/x\/v2\/splash\/(?:brand\/list|event\/list2|list|show) script-path=.../Bilibili_remove_ads.js,requires-body=true,tag=移除开屏广告
-http-response ^https:\/\/app\.bilibili\.com\/x\/v2\/account\/(?:mine|myinfo) script-path=.../Bilibili_remove_ads.js,requires-body=true,tag=精简我的页面
+http-response ^https?:\/\/app\.bili(bili\.com|api\.net)\/x\/v2\/(splash\/(brand\/list|event\/list2|list|show)|feed\/index(\/(relate\/)?story)?|search\/square)
+  requires-body=1, script-path=.../response.bundle.js, tag=📺 BiliBili.ADBlock.response.json
 ```
 
-对照 BiliTheme 的匹配范围：
+**`/x/resource/show/skin` 和 `/x/v2/space` 在 ADBlock 里完全没有规则命中**
+（拆开 `response.bundle.js` 验证：全文件搜 `show/skin` 命中 0 次）。
 
+**Biliverse Enhanced v0.6.1** 只碰 `x/resource/show/tab/v2`、`account/mine`、`region/index`、
+`channel/region/list` 和 `app.bilibili.com/settings/*`，与 BiliTheme 的四个 URL 无交集。
+
+### 2.2 唯一的 URL 级冲突：开屏
+
+`/x/v2/splash/brand/list` 被两边同时命中。Loon 官方文档（新版 Script 语法）明确：
+
+> **同一响应最多选择一条 Response Script，并保持原配置顺序。**
+
+而且方向正好相反：
+
+```js
+// ADBlock response.bundle.js
+case "/x/v2/splash/brand/list": switch (c?.Splash) { case true: default: {
+  const p = ["account", "event_list", "preload", "show"];
+  p.forEach((e) => { delete m.data[e] });      // 删掉 preload
+}}
 ```
-www.bilibili.com/h5/mall/(digital-card/home|suit/detail)
-app.bilibili.com/x/resource/show/skin     <-- 与去广告的「复写」同 URL
-app.bilibili.com/x/v2/space
-app.bilibili.com/x/v2/splash/brand/list   <-- 与去广告的「响应脚本」同 URL
+```js
+// BiliTheme
+data.data.preload = [{ show: showItems, forcibly: true, force_show_times: 999, rule: "random" }];
 ```
 
-### 关键结论
+一个要删 `preload`，一个全靠 `preload` —— 在 Loon 上只能有一个生效。
+→ **结论：在 ADBlock 里把 `Splash` 关掉，让位给 BiliTheme，是正确且最优的选择。**
 
-1. **`/x/v2/splash/brand/list` 是硬冲突**
-   Loon 官方文档（新版 Script 语法）明确：
-   > 同一响应最多选择一条 Response Script，并保持原配置顺序。
+### 2.3 但皮肤失效不是 URL 冲突
 
-   去广告要"清空开屏广告"，BiliTheme 要"注入自己的开屏"——同一 URL 上两条
-   `http-response` 脚本，Loon 只会跑一条。这不是 bug，是设计冲突。
-   → 处理：在 Loon 插件列表里把 BiliTheme 排到去广告之前，
-   或者关掉去广告那条「移除开屏广告」脚本 + BiliTheme 的 `splashBg` 开关二选一。
+用户实测：`ADBlock.Splash = true` 时 BiliTheme 要两次冷启动才生效；`Splash = false` 时一次就生效。
+而 ADBlock **根本不碰皮肤接口** —— 所以这不可能是"谁抢到 URL"的问题。
 
-2. **`/x/resource/show/skin` 上「复写」与「脚本」并存**
-   去广告用 `response-body-json-del data.common_equip`（复写）改同一个响应体，
-   BiliTheme 用 `http-response` 脚本写 `user_equip`。两者都要求 Loon 读取完整 body，
-   谁最后落地谁生效。
+**实际机制（时序/超时）**：
 
-3. **`/x/v2/account/(mine|myinfo)`**
-   BiliTheme 刻意不碰这个接口（上游 README 也写明），但去广告的「精简我的页面」脚本会改它——
-   装扮权益相关的字段若被删，可能影响 App 判定是否应用新装扮。
+1. 冷启动第一个请求就是 `/x/v2/splash/brand/list`，ADBlock 的 `response.bundle.js` 要在这里跑
+   （1 MB 的打包脚本，含配置初始化）。
+2. 紧接着 App 请求 `/x/resource/show/skin`，BiliTheme 的脚本要跑，
+   而它**脚本内部还要串行发 1~3 个 `$httpClient` 请求**去 `api.bilibili.com` 拉装扮素材。
+3. 两者叠在同一个脚本引擎的冷启动窗口里 → 累计**超过 `.lpx` 里的 `timeout=10`** →
+   **Loon 直接杀掉脚本，响应原样放行** → 这一次等于没注入。
+4. 第二次冷启动：脚本已编译、BoxJS 配置已缓存、DNS/TLS 都热 → 压进 10 秒内 → 成功。
+
+`ADBlock.Splash = false` 时，那个 `switch(c?.Splash)` 直接落到空分支提前返回，
+冷启动窗口少了一大块执行量，BiliTheme 就稳了。
+
+这也解释了**为什么把插件在 Loon 里拖到最前面没用** —— 不是匹配顺序问题，
+"保持原配置顺序"指的是配置文件的顺序，而且这压根不是顺序造成的。
+
+**为什么只有 Loon**：`timeout` 是 Loon 的硬性杀脚本超时，其他客户端要么给得更宽，
+要么脚本内 `$httpClient` 不走同一套调度。
 
 ---
 
-## 三、为什么「第二次冷启动才生效」（待验证，按可能性排序）
+## 三、本仓库打的补丁
 
-1. **App 自身机制（与代理无关）**
-   注入后 App 需要下载装扮 zip、校验 md5、解压安装；而冷启动早期界面早已渲染完，
-   所以本次启动看不到 → 下次冷启动才生效。上游 README 自己也写了「部分装扮可能需要重启两次」。
+| 文件 | 改动 | 目的 |
+|---|---|---|
+| `BiliTheme.lpx` | `tag=BiliTheme.response` 的 `timeout=10` → `timeout=30`；`BiliTheme.api` 的 `timeout=15` → `timeout=20` | 不再被 Loon 在素材拉取途中杀掉 |
+| `bili-theme.response.js` | `fetchSuit()` 里多个部件由 `for await` 串行改为 `Promise.all` 并发 | 把关键路径耗时砍掉一大半 |
+| `bili-theme.response.js` | 新增耗时与失败原因日志 | 直接看到是不是卡在超时边界 |
 
-2. **Loon 脚本超时（`timeout=10`）**
-   `injectSkinResponse` → `fetchSuit` 会**串行**请求 1~N 个 item 的 garb 接口
-   （`fetchItemFull` 失败还会再回落请求第二个 URL）。JS 侧 `setTimeout` 是 8s，
-   但 `$httpClient` 自身的连接/请求超时是 Loon 默认值。
-   第一次冷启动 DNS/TLS/节点都是冷的，累计超过 `timeout=10` 时 **Loon 会杀掉脚本、响应原样放行**，
-   等于这一次没注入；第二次热了才成功。→ 修法：把 `timeout` 提到 20，并把多个 id 改成并发请求。
+新增日志形如：
 
-3. **`$persistentStore` 跨脚本可见性**
-   panel.js（http-request）写入、response.js（http-response）读取，用的是同一个显式 key `BiliTheme`。
-   理论上立即共享；若 Loon 的脚本运行时对 persistentStore 有缓存，也可能表现为「要等一轮」。
+```
+[BiliTheme] 素材拉取完成: 3/3 个部件, 耗时 842ms
+[BiliTheme] benefit 未返回可用数据 (item_id: 123, code: -404)，回落 mall/suit/detail
+[BiliTheme] 素材拉取失败 (item_id: 123, code: 请求失败/超时)
+```
 
-### 60 秒定位方法
-Loon → 日志，筛 `/x/resource/show/skin`：
-- 看 `BiliTheme.response` 有没有命中；
-- 看有没有 `[BiliTheme] 皮肤与加载动画注入成功:「xxx」`；
-- 看到 `[BiliTheme] 警告: 未获取到主题皮肤素材` → 就是 `fetchSuit` 失败（被去广告挡了或超时）。
+改动已通过上游自带的沙箱回归测试：**96 passed / 0 failed**（`node tools/mock-test.js`）。
 
-## 四、可直接打的补丁
-- `timeout=10` → `timeout=20`（.lpx）
-- `fetchSuit` 里多个 id 改 `Promise.all` 并发（response.js）
-- 兼容去广告：把 `/x/v2/splash/brand/list` 的注入挪到 `x/v2/splash/event/list2` 之类未被占用的入口（需实测）
+## 四、验证方法
+
+Loon → 日志，筛 `BiliTheme`：
+
+- 有 `素材拉取完成: N/N 个部件, 耗时 xxxms` → 脚本跑完了，看耗时离 10000 有多远
+- 只有 `警告: 未获取到主题皮肤素材` → `fetchSuit` 失败（接口被挡或超时）
+- **整行都没有** → 脚本根本没被执行（Loon 没匹配上，或被别的脚本挤掉）
+
+## 五、剩余已知限制
+
+- `/x/v2/splash/brand/list` 在 Loon 上必然二选一，与 ADBlock 的 `Splash` 开关互斥。
+- `spaceBg` 默认关；Loon 插件里 `argument=[{spaceBg},{splashBg}]` 传的是对象，脚本能正确读到。

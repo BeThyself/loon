@@ -130,8 +130,10 @@ function extractAllSpaceImages(spaceBg, skin) {
 async function fetchItemFull(id) {
 	let j = await httpGet(GARB_BENEFIT + id + "&part=emoji_package");
 	if (j && j.code === 0 && j.data && (j.data.suit_items !== undefined || j.data.properties)) return j.data;
+	console.log(`[BiliTheme] benefit 未返回可用数据 (item_id: ${id}, code: ${j ? j.code : "请求失败/超时"})，回落 mall/suit/detail`);
 	j = await httpGet(GARB_SUIT_DETAIL + id + "&part=suit");
 	if (j && j.code === 0 && j.data) return j.data;
+	console.log(`[BiliTheme] 素材拉取失败 (item_id: ${id}, code: ${j ? j.code : "请求失败/超时"})`);
 	return null;
 }
 
@@ -143,8 +145,12 @@ async function fetchSuit(itemId, ids) {
 	const uniq = [...new Set((ids && ids.length ? ids : [itemId]).map(String).filter(Boolean))];
 	const parts = { skin: null, loading: null, spaceBg: null };
 	let name = "";
-	for (const id of uniq) {
-		const item = await fetchItemFull(id);
+	// Loon 的 http-response 脚本有硬超时（.lpx 里 timeout=10），串行拉多个部件极易在冷启动时被杀。
+	// 这里全部并发，并把耗时打出来，便于判断是不是卡在超时边界。
+	const t0 = Date.now();
+	const items = await Promise.all(uniq.map((id) => fetchItemFull(id).catch(() => null)));
+	console.log(`[BiliTheme] 素材拉取完成: ${items.filter(Boolean).length}/${uniq.length} 个部件, 耗时 ${Date.now() - t0}ms`);
+	for (const item of items) {
 		if (!item) continue;
 		const p = extractParts(item);
 		if (!parts.skin && p.skin) { parts.skin = p.skin; name = item.name || ""; }
