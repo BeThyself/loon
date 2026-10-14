@@ -124,28 +124,44 @@ data.data.preload = [{ show: showItems, forcibly: true, force_show_times: 999, r
 | 文件 | 改动 | 目的 |
 |---|---|---|
 | `BiliTheme.lpx` | `tag=BiliTheme.response` 的 `timeout=10` → `timeout=30`；`BiliTheme.api` 的 `timeout=15` → `timeout=20` | 不再被 Loon 在素材拉取途中杀掉 |
+| `BiliTheme.lpx` | 新增插件参数 `diagNotify`（诊断通知，默认开） | 不用翻日志也能拿到关键数据，排查完请关掉 |
 | `bili-theme.response.js` | `fetchSuit()` 里多个部件由 `for await` 串行改为 `Promise.all` 并发 | 把关键路径耗时砍掉一大半 |
-| `bili-theme.response.js` | 新增耗时与失败原因日志 | 直接看到是不是卡在超时边界 |
+| `bili-theme.response.js` | 新增耗时与失败原因日志 + 诊断通知 | 直接看到是不是卡在超时边界 |
 
-新增日志形如：
+## 四、为什么在 Loon 日志里找不到 console.log
 
-```
-[BiliTheme] 素材拉取完成: 3/3 个部件, 耗时 842ms
-[BiliTheme] benefit 未返回可用数据 (item_id: 123, code: -404)，回落 mall/suit/detail
-[BiliTheme] 素材拉取失败 (item_id: 123, code: 请求失败/超时)
-```
+Loon 官方文档（新版 Script 语法）里 `with` 支持的字段：
 
-改动已通过上游自带的沙箱回归测试：**96 passed / 0 failed**（`node tools/mock-test.js`）。
+| 字段 | 类型 | 默认值 | 适用范围 |
+|---|---|---|---|
+| `debug` | Boolean / 插件 Boolean | **false** | 全部 Script |
 
-## 四、验证方法
+**`debug` 默认 false —— 也就是脚本的 `console.log` 默认不会写进日志。**
+BiliTheme 的 `.lpx` 用的是旧版语法，没有这个开关，所以日志里翻不到。
 
-Loon → 日志，筛 `BiliTheme`：
+两条路：
 
-- 有 `素材拉取完成: N/N 个部件, 耗时 xxxms` → 脚本跑完了，看耗时离 10000 有多远
-- 只有 `警告: 未获取到主题皮肤素材` → `fetchSuit` 失败（接口被挡或超时）
-- **整行都没有** → 脚本根本没被执行（Loon 没匹配上，或被别的脚本挤掉）
+1. **不想折腾日志** → 用本仓库的 `diagNotify` 开关，脚本直接把结果弹成系统通知。
+2. **想要真正的日志** → 把插件规则改写成新版语法并加 `debug=true`：
+   ```ini
+   response if ${url} ~= /^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\?|$)/ then script("https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js", {${spaceBg}, ${splashBg}, ${diagNotify}}) with tag="BiliTheme.response", timeout=30, requires_body=true, debug=true
+   ```
+   需要 Loon ≥ 3.5.1 (983)。**这条我没法在本地实测**，改之前先备份能用的旧语法版本。
 
-## 五、剩余已知限制
+## 五、怎么读诊断结果
+
+打开插件参数里的 `diagNotify`，冷启动 B 站，看通知：
+
+| 通知内容 | 含义 |
+|---|---|
+| `✅ 皮肤注入成功「xxx」` + `素材 3/3 个部件，耗时 842ms` | 时序猜测坐实，耗时离 30000ms 很远，问题解决 |
+| `✅ ... 耗时 9xxx ms` | 还在超时边界附近，需要继续压耗时（下一步去掉 ids 里的冗余 item） |
+| `❌ 皮肤未注入` + `garb 接口没给到 package_url` | 素材接口被挡或返回异常，往 `api.bilibili.com` 的规则上查 |
+| `⏭ 脚本已执行，但本地没有选中主题` | 脚本跑了，但 `$persistentStore["BiliTheme"]` 是空的 —— 注入那一步没写进去 |
+| **完全没有通知** | 脚本根本没被执行：Loon 没匹配上、被别的脚本挤掉，或插件没生效 |
+
+## 六、剩余已知限制
 
 - `/x/v2/splash/brand/list` 在 Loon 上必然二选一，与 ADBlock 的 `Splash` 开关互斥。
-- `spaceBg` 默认关；Loon 插件里 `argument=[{spaceBg},{splashBg}]` 传的是对象，脚本能正确读到。
+- `spaceBg` 默认关；Loon 插件里 `argument=[{spaceBg},{splashBg},{diagNotify}]` 传的是对象，脚本能正确读到。
+- `diagNotify` 排查完记得关，否则每次冷启动都会弹一条通知。

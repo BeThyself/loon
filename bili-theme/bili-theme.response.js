@@ -17,6 +17,7 @@
 const VERSION = "3.2.1";
 const STORAGE_ROOT = "BiliTheme";
 let modified = false;
+let lastStat = null; // 最近一次素材拉取的统计，供诊断通知使用
 
 /* **************** 平台适配层 **************** */
 const $app = typeof $loon !== "undefined" ? "Loon"
@@ -50,6 +51,28 @@ function getTheme() {
 function getSettings() {
 	const theme = getTheme();
 	return { Switch: !!theme, Skin: theme || {} };
+}
+
+/* **************** 诊断通知 **************** */
+/**
+ * Loon 默认不把脚本的 console.log 写进日志（新版语法的 debug 默认 false，
+ * 旧版语法没有该开关），所以排查时用系统通知把关键数据直接弹出来。
+ * 由插件参数 diagNotify 控制，默认关闭。
+ */
+function isDiagEnabled() {
+	const a = typeof $argument === "undefined" ? undefined : $argument;
+	const v = a && typeof a === "object" ? (a.diagNotify ?? a.diag) : a;
+	if (typeof v === "boolean") return v;
+	if (typeof v === "number") return v === 1;
+	if (typeof v === "string") return v.trim().toLowerCase() === "true" || v.trim() === "1";
+	return false;
+}
+function notifyDiag(subtitle, content) {
+	try {
+		if (typeof $notification !== "undefined" && $notification?.post) {
+			$notification.post("哔哩主题 · 诊断", subtitle, content);
+		}
+	} catch {}
 }
 
 /* **************** garb API **************** */
@@ -149,7 +172,9 @@ async function fetchSuit(itemId, ids) {
 	// 这里全部并发，并把耗时打出来，便于判断是不是卡在超时边界。
 	const t0 = Date.now();
 	const items = await Promise.all(uniq.map((id) => fetchItemFull(id).catch(() => null)));
-	console.log(`[BiliTheme] 素材拉取完成: ${items.filter(Boolean).length}/${uniq.length} 个部件, 耗时 ${Date.now() - t0}ms`);
+	const ms = Date.now() - t0;
+	lastStat = { total: uniq.length, got: items.filter(Boolean).length, ms };
+	console.log(`[BiliTheme] 素材拉取完成: ${lastStat.got}/${lastStat.total} 个部件, 耗时 ${ms}ms`);
 	for (const item of items) {
 		if (!item) continue;
 		const p = extractParts(item);
@@ -438,6 +463,8 @@ async function injectSkinResponse(data, skinConfig) {
 	if (!itemId) return data;
 	const suit = await fetchSuit(itemId, skinConfig.ids);
 	if (!suit?.skin) {
+		if (lastStat) lastStat.reason = `garb 接口没给到 package_url（${lastStat.got}/${lastStat.total} 个部件成功，耗时 ${lastStat.ms}ms）`;
+		else lastStat = { reason: "fetchSuit 提前返回，未发出任何素材请求" };
 		console.log(`[BiliTheme] 警告: 未获取到主题皮肤素材 (item_id: ${itemId})，已放行原始响应`);
 		return data;
 	}
@@ -760,6 +787,16 @@ async function injectSplashResponse(data, skinConfig) {
 	if (path === "/x/resource/show/skin") {
 		if (settings.Switch && settings.Skin?.item_id) {
 			data = await injectSkinResponse(data, settings.Skin);
+			if (isDiagEnabled()) {
+				notifyDiag(
+					modified ? `✅ 皮肤注入成功「${settings.Skin.name || "个性装扮"}」` : "❌ 皮肤未注入",
+					modified
+						? `素材 ${lastStat?.got}/${lastStat?.total} 个部件，耗时 ${lastStat?.ms}ms（超时上限 30000ms）`
+						: `${lastStat?.reason || "未知原因"}`,
+				);
+			}
+		} else if (isDiagEnabled()) {
+			notifyDiag("⏭ 脚本已执行，但本地没有选中主题", "$persistentStore['BiliTheme'] 为空 —— 说明注入那一步没写进去");
 		}
 	} else if (path === "/x/v2/space") {
 		if (!isSpaceBgEnabled()) {

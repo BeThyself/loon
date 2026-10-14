@@ -1,5 +1,5 @@
 #!name = 哔哩主题
-#!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。\n（本地优化版：脚本超时 30s + 素材并发拉取 + 诊断日志）
+#!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。\n（本地优化版：脚本超时 30s + 素材并发拉取 + 诊断通知）
 #!author = chaoscard [https://github.com/chaoscard/bili-theme]
 #!icon = https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Bilibili.png
 #!tag = 功能增强
@@ -8,11 +8,12 @@
 
 [Argument]
 spaceBg = switch, false, tag=个人空间头图注入, desc=开启后将装扮头图注入到个人空间主页，关闭则保留原本空间头图。
+diagNotify = switch, true, tag=诊断通知（排查用，用完请关）, desc=开启后每次冷启动皮肤注入会弹一条系统通知，报告素材拉取部件数与耗时。排查结束请关闭。
 splashBg = switch, true, tag=开屏画面装扮注入, desc=开启后将装扮立绘注入到开屏画面，关闭则保留原本开屏。
 
 [Script]
 # 详情页注入按钮 + 皮肤/加载动画/开屏画面/空间头图（响应改写）
-http-response ^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\?|$) requires-body=1, argument=[{spaceBg}, {splashBg}], script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.response, timeout=30
+http-response ^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\?|$) requires-body=1, argument=[{spaceBg}, {splashBg}, {diagNotify}], script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.response, timeout=30
 # 主题配置持久化 API
 http-request ^https?:\/\/app\.bilibili\.com\/settings\/theme(\/|\?|$) requires-body=1, script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.panel.js, tag=BiliTheme.api, timeout=20
 
