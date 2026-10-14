@@ -10,7 +10,7 @@
  * 存储结构:
  *   $persistentStore["BiliTheme"] = { item_id, name, ids, cover }
  */
-const VERSION = "3.2.1";
+const VERSION = "3.2.1-loon.3";
 const STORAGE_ROOT = "BiliTheme";
 const BASE = "/settings/theme/api";
 
@@ -62,6 +62,18 @@ function reply(status, data, cors = true) {
 			const d = storeRead(STORAGE_ROOT);
 			const theme = d?.item_id ? d : (d?.config?.skin || null);
 			reply(200, { theme: theme || null });
+			return;
+		}
+		case "/diag": {
+			const diag = storeRead("BiliTheme.diag");
+			reply(200, {
+				panelVersion: VERSION,
+				theme: storeRead(STORAGE_ROOT) || null,
+				lastSkinRun: diag || null,
+				note: diag
+					? "lastSkinRun 就是最近一次 /x/resource/show/skin 的诊断结果"
+					: "还没有诊断记录：response.js 可能是旧版（未更新），或安装后还没冷启动过哔哩哔哩",
+			});
 			return;
 		}
 		case "/select": {

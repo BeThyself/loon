@@ -141,27 +141,73 @@ BiliTheme 的 `.lpx` 用的是旧版语法，没有这个开关，所以日志�
 
 两条路：
 
-1. **不想折腾日志** → 用本仓库的 `diagNotify` 开关，脚本直接把结果弹成系统通知。
+1. **不想折腾日志** → 见下面第五节，脚本会把结果落盘 + 弹通知。
 2. **想要真正的日志** → 把插件规则改写成新版语法并加 `debug=true`：
    ```ini
    response if ${url} ~= /^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\?|$)/ then script("https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js", {${spaceBg}, ${splashBg}, ${diagNotify}}) with tag="BiliTheme.response", timeout=30, requires_body=true, debug=true
    ```
    需要 Loon ≥ 3.5.1 (983)。**这条我没法在本地实测**，改之前先备份能用的旧语法版本。
 
-## 五、怎么读诊断结果
+## 五、诊断信息的三个出口
 
-打开插件参数里的 `diagNotify`，冷启动 B 站，看通知：
+脚本每次处理 `/x/resource/show/skin` 都会把结果**无条件落盘**到 `$persistentStore["BiliTheme.diag"]`，
+不依赖通知权限、也不依赖插件参数。三种读法：
+
+### 出口 1：浏览器直接看（最稳，推荐）
+
+用任意浏览器打开：
+
+```
+https://app.bilibili.com/settings/theme/api/diag
+```
+
+这个路径是假的，由 `bili-theme.panel.js` 直接应答（走 Loon 的 MITM），返回：
+
+```json
+{
+  "panelVersion": "3.2.1-loon.3",
+  "theme": { "item_id": "...", "name": "...", "ids": ["..."], "cover": "..." },
+  "lastSkinRun": {
+    "hit": "skin", "theme": "未来有你福利卡池个性主题",
+    "injected": true, "parts": 3, "total": 3, "ms": 842,
+    "reason": null, "diagFlag": true,
+    "version": "3.2.1-loon.3", "runs": 2, "app": "Loon",
+    "arg": "{\"spaceBg\":false,\"splashBg\":true,\"diagNotify\":true}",
+    "time": "2026-10-14T06:11:49.968Z"
+  },
+  "note": "lastSkinRun 就是最近一次 /x/resource/show/skin 的诊断结果"
+}
+```
+
+**这一步同时能判定脚本有没有更新到**：
+
+| 看到的 | 说明 |
+|---|---|
+| `panelVersion` 是 `3.2.1-loon.3` | 两个脚本都换成新版了 |
+| `{"error":"unknown endpoint: /diag"}` | `panel.js` 还是旧版，插件没更新成功 |
+| 打不开 / 一直转圈 | Loon 没拦到这个域名，或 MitM 未生效 |
+| `lastSkinRun` 是 `null` + note 提示没记录 | `response.js` 还是旧版，或装好后还没冷启动过 B 站 |
+
+### 出口 2：系统通知
+
+插件参数 `diagNotify` 打开时，冷启动会弹一条通知。
+**注意**：Loon 文档写明「通知是否最终展示还会受到系统通知权限和 Loon 通知设置影响」——
+先去 iOS 设置 → 通知 → Loon 确认开关是开的，否则这条永远看不到。
 
 | 通知内容 | 含义 |
 |---|---|
-| `✅ 皮肤注入成功「xxx」` + `素材 3/3 个部件，耗时 842ms` | 时序猜测坐实，耗时离 30000ms 很远，问题解决 |
-| `✅ ... 耗时 9xxx ms` | 还在超时边界附近，需要继续压耗时（下一步去掉 ids 里的冗余 item） |
+| `✅ 皮肤注入成功「xxx」` + `素材 3/3 个部件，耗时 842ms` | 时序猜测坐实，耗时远离 30000ms，问题解决 |
+| `✅ ... 耗时 9xxx ms` | 还在超时边界附近，需要继续压耗时 |
 | `❌ 皮肤未注入` + `garb 接口没给到 package_url` | 素材接口被挡或返回异常，往 `api.bilibili.com` 的规则上查 |
-| `⏭ 脚本已执行，但本地没有选中主题` | 脚本跑了，但 `$persistentStore["BiliTheme"]` 是空的 —— 注入那一步没写进去 |
-| **完全没有通知** | 脚本根本没被执行：Loon 没匹配上、被别的脚本挤掉，或插件没生效 |
+| `⏭ 脚本已执行，但本地没有选中主题` | 脚本跑了，但 `$persistentStore["BiliTheme"]` 是空的 |
+| **完全没有通知** | 先查出口 1：`lastSkinRun` 有记录 → 是通知权限问题；没记录 → 脚本压根没跑 |
+
+### 出口 3：Loon 日志
+
+需要新版语法 + `debug=true`，见第四节。
 
 ## 六、剩余已知限制
 
 - `/x/v2/splash/brand/list` 在 Loon 上必然二选一，与 ADBlock 的 `Splash` 开关互斥。
 - `spaceBg` 默认关；Loon 插件里 `argument=[{spaceBg},{splashBg},{diagNotify}]` 传的是对象，脚本能正确读到。
-- `diagNotify` 排查完记得关，否则每次冷启动都会弹一条通知。
+- `diagNotify` 排查完记得关，否则每次冷启动都会弹一条通知（落盘诊断不弹通知，可以一直留着）。

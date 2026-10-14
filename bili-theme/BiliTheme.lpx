@@ -1,6 +1,6 @@
 #!name = 哔哩主题
-#!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。\n（本地优化版：脚本超时 30s + 素材并发拉取 + 诊断通知）
-#!author = chaoscard [https://github.com/chaoscard/bili-theme]
+#!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。\n（本地优化版：脚本超时 30s + 素材并发拉取 + 落盘诊断）
+#!author = Thyself [https://github.com/BeThyself/loon]
 #!icon = https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Bilibili.png
 #!tag = 功能增强
 #!date = 2026-10-14
@@ -8,7 +8,7 @@
 
 [Argument]
 spaceBg = switch, false, tag=个人空间头图注入, desc=开启后将装扮头图注入到个人空间主页，关闭则保留原本空间头图。
-diagNotify = switch, true, tag=诊断通知（排查用，用完请关）, desc=开启后每次冷启动皮肤注入会弹一条系统通知，报告素材拉取部件数与耗时。排查结束请关闭。
+diagNotify = switch, true, tag=诊断通知（排查用，用完请关）, desc=开启后每次冷启动皮肤注入会弹一条系统通知。若系统不允许 Loon 发通知，可改用浏览器打开 https://app.bilibili.com/settings/theme/api/diag 查看同样的诊断结果。
 splashBg = switch, true, tag=开屏画面装扮注入, desc=开启后将装扮立绘注入到开屏画面，关闭则保留原本开屏。
 
 [Script]

@@ -14,7 +14,7 @@
  *
  * MITM hostname: app.bilibili.com, www.bilibili.com
  */
-const VERSION = "3.2.1";
+const VERSION = "3.2.1-loon.3";
 const STORAGE_ROOT = "BiliTheme";
 let modified = false;
 let lastStat = null; // 最近一次素材拉取的统计，供诊断通知使用
@@ -73,6 +73,26 @@ function notifyDiag(subtitle, content) {
 			$notification.post("哔哩主题 · 诊断", subtitle, content);
 		}
 	} catch {}
+}
+/**
+ * 把诊断结果写进 $persistentStore，不依赖通知权限 / 插件参数，
+ * 之后任意浏览器打开 https://app.bilibili.com/settings/theme/api/diag 就能看到。
+ */
+function saveDiag(patch) {
+	try {
+		const prev = storeRead("BiliTheme.diag") || {};
+		let argStr;
+		try { argStr = JSON.stringify($argument) ?? String($argument); } catch { argStr = "<读取失败>"; }
+		const rec = Object.assign({}, prev, patch, {
+			version: VERSION,
+			runs: (Number(prev.runs) || 0) + 1,
+			time: new Date().toISOString(),
+			app: $app,
+			arg: argStr,
+		});
+		storeWrite("BiliTheme.diag", rec);
+		return rec;
+	} catch { return null; }
 }
 
 /* **************** garb API **************** */
@@ -785,18 +805,31 @@ async function injectSplashResponse(data, skinConfig) {
 	try { data = JSON.parse(rawBody); } catch { $done({}); return; }
 
 	if (path === "/x/resource/show/skin") {
-		if (settings.Switch && settings.Skin?.item_id) {
+		const hasTheme = !!(settings.Switch && settings.Skin?.item_id);
+		if (hasTheme) {
 			data = await injectSkinResponse(data, settings.Skin);
-			if (isDiagEnabled()) {
-				notifyDiag(
-					modified ? `✅ 皮肤注入成功「${settings.Skin.name || "个性装扮"}」` : "❌ 皮肤未注入",
-					modified
+		}
+		saveDiag({
+			hit: "skin",
+			theme: hasTheme ? (settings.Skin.name || settings.Skin.item_id) : null,
+			injected: hasTheme ? modified : false,
+			parts: lastStat?.got ?? null,
+			total: lastStat?.total ?? null,
+			ms: lastStat?.ms ?? null,
+			reason: hasTheme
+				? (modified ? null : (lastStat?.reason || "未注入，原因未知"))
+				: "脚本跑了，但 $persistentStore['BiliTheme'] 是空的 —— 注入那一步没写进去",
+			diagFlag: isDiagEnabled(),
+		});
+		if (isDiagEnabled()) {
+			notifyDiag(
+				!hasTheme ? "⏭ 脚本已执行，但本地没有选中主题"
+					: (modified ? `✅ 皮肤注入成功「${settings.Skin.name || "个性装扮"}」` : "❌ 皮肤未注入"),
+				!hasTheme ? "$persistentStore['BiliTheme'] 为空 —— 注入那一步没写进去"
+					: (modified
 						? `素材 ${lastStat?.got}/${lastStat?.total} 个部件，耗时 ${lastStat?.ms}ms（超时上限 30000ms）`
-						: `${lastStat?.reason || "未知原因"}`,
-				);
-			}
-		} else if (isDiagEnabled()) {
-			notifyDiag("⏭ 脚本已执行，但本地没有选中主题", "$persistentStore['BiliTheme'] 为空 —— 说明注入那一步没写进去");
+						: `${lastStat?.reason || "未知原因"}`),
+			);
 		}
 	} else if (path === "/x/v2/space") {
 		if (!isSpaceBgEnabled()) {
