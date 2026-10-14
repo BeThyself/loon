@@ -123,10 +123,30 @@ data.data.preload = [{ show: showItems, forcibly: true, force_show_times: 999, r
 
 | 文件 | 改动 | 目的 |
 |---|---|---|
-| `BiliTheme.lpx` | `tag=BiliTheme.response` 的 `timeout=10` → `timeout=30`；`BiliTheme.api` 的 `timeout=15` → `timeout=20` | 不再被 Loon 在素材拉取途中杀掉 |
-| `BiliTheme.lpx` | 新增插件参数 `diagNotify`（诊断通知，默认开） | 不用翻日志也能拿到关键数据，排查完请关掉 |
-| `bili-theme.response.js` | `fetchSuit()` 里多个部件由 `for await` 串行改为 `Promise.all` 并发 | 把关键路径耗时砍掉一大半 |
-| `bili-theme.response.js` | 新增耗时与失败原因日志 + 诊断通知 | 直接看到是不是卡在超时边界 |
+| `BiliTheme.lpx` | `BiliTheme.response` 的 `timeout=10` → `timeout=30`；`BiliTheme.api` 的 `timeout=15` → `timeout=20` | 不再被 Loon 在素材拉取途中杀掉 |
+| `BiliTheme.lpx` | 新增插件参数 `diagNotify`（诊断通知，默认开） | 不用翻日志也能拿到关键数据 |
+| `BiliTheme.lpx` | `#!author` 改为 Thyself | fork 后自行维护 |
+| `bili-theme.panel.js` | **`/select` 时就把整套素材预拉取好并写进 `$persistentStore["BiliTheme.suit"]`** | 把网络请求从冷启动关键路径上挪走 —— 这是核心修复 |
+| `bili-theme.panel.js` | 新增 `/settings/theme/api/diag` 端点 | 浏览器直接读诊断，不依赖通知权限 |
+| `bili-theme.response.js` | `fetchSuit()` 先查预拉取缓存，命中则**零网络请求**；未命中才现场拉取并写回缓存 | 冷启动响应不再等网络 |
+| `bili-theme.response.js` | 多部件由串行改 `Promise.all` 并发；记录每个 item 走的接口（`benefit` / `detail`） | 拉取耗时与失败原因可查 |
+| `bili-theme.response.js` | 诊断保留最近 5 次，含 `before`（原始响应里已有的 equip 字段）与 `wrote`（我们写进去的） | 能对比成功/失败两次的差异 |
+
+### 3.1 为什么是「预拉取」而不是「加大超时」
+
+实测发现失败与耗时的相关性根本不在秒级：
+
+| 素材拉取耗时 | 结果 |
+|---|---|
+| < 300ms | 皮肤生效 |
+| ~300ms | 经常不生效 |
+
+300ms 离 30 秒超时差了三数量级，所以**不是超时**。唯一说得通的解释是：
+**`/x/resource/show/skin` 的响应在脚本里多花了这段网络时间，App 那边这条关键响应就被推迟了**，
+而 App 对这段时间敏感（它有自己的启动时序）。
+
+那就别在关键路径上发请求 —— 把 `fetchSuit()` 提前到用户点衣服图标那一刻（H5 页面里，
+用户对着"正在注入装扮与预热缓存…"的 toast，完全无感），冷启动只剩纯计算，耗时归零。
 
 ## 四、为什么在 Loon 日志里找不到 console.log
 
@@ -167,17 +187,38 @@ https://app.bilibili.com/settings/theme/api/diag
 {
   "panelVersion": "3.2.1-loon.3",
   "theme": { "item_id": "...", "name": "...", "ids": ["..."], "cover": "..." },
-  "lastSkinRun": {
-    "hit": "skin", "theme": "未来有你福利卡池个性主题",
-    "injected": true, "parts": 3, "total": 3, "ms": 842,
-    "reason": null, "diagFlag": true,
-    "version": "3.2.1-loon.3", "runs": 2, "app": "Loon",
-    "arg": "{\"spaceBg\":false,\"splashBg\":true,\"diagNotify\":true}",
-    "time": "2026-10-14T06:11:49.968Z"
-  },
-  "note": "lastSkinRun 就是最近一次 /x/resource/show/skin 的诊断结果"
+  "suitCache": { "for": "1766130114001", "name": "未来有你福利卡池个性主题", "ids": ["..."] },
+  "runs": 7,
+  "lastRuns": [
+    {
+      "time": "2026-10-14T06:27:38.115Z",
+      "hit": "skin",
+      "query": "?build=91400300",
+      "hasMid": true,
+      "theme": "未来有你福利卡池个性主题",
+      "before": { "userEquip": null, "commonEquip": 9, "loadEquip": null, "skinColors": null, "equipKeys": ["common_equip"] },
+      "injected": true,
+      "wrote": { "id": 1766130114001, "ver": 3, "pkg": "https://i0.hdslb.com/bfs/garb/...", "hasLoad": true },
+      "cached": true,
+      "parts": 1, "total": 1, "ms": 0,
+      "trace": [],
+      "reason": null
+    }
+  ],
+  "note": "lastRuns 是最近 5 次 /x/resource/show/skin 的诊断，从旧到新"
 }
 ```
+
+关键字段：
+
+| 字段 | 说明 |
+|---|---|
+| `suitCache` | 有值 = 预拉取成功，冷启动应该零网络 |
+| `cached` / `ms` | `true` + `0` = 命中缓存（理想状态）；`false` + 几百 ms = 又走了现场拉取 |
+| `trace` | 每个 item 走的哪个接口。出现 `via: "detail"` 说明 `benefit` 没给数据，走了回落 |
+| `before` | 原始响应里本来有什么。`userEquip` 非 null 说明 App 早就有装扮了 |
+| `wrote` | 我们写进去的 `user_equip` —— 和 App 实际显示的对不上就说明被覆盖或被忽略 |
+| `reason` | 没注入成功时的原因 |
 
 **这一步同时能判定脚本有没有更新到**：
 
