@@ -12,7 +12,7 @@
 | `bili-theme/BiliTheme.lpx` | 哔哩主题插件（Loon 导入用），script-path 已指向本仓库 |
 | `bili-theme/bili-theme.response.js` | 响应改写脚本（H5 注入 + 皮肤/加载动画/空间头图/开屏注入） |
 | `bili-theme/bili-theme.panel.js` | 主题配置持久化 API（伪造 `/settings/theme/api/*`） |
-| `bili-theme/README.md` | 注入原理与 Loon 兼容性分析笔记 |
+| `bili-theme/README.md` | 注入原理、本地改动说明与已知行为 |
 
 ## 安装（Loon）
 

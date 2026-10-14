@@ -6,21 +6,12 @@
  * 端点:
  *   POST /settings/theme/api/select  body: item_id=xx[&ids=a,b,c][&name=xx][&cover=xx]
  *   GET  /settings/theme/api/config  → 当前选中的主题信息
- *   GET  /settings/theme/api/diag    → 诊断信息（脚本版本 + 最近 5 次皮肤注入记录）
  *
  * 存储结构:
- *   $persistentStore["BiliTheme"]      = { item_id, name, ids, cover }   用户选中的主题
- *   $persistentStore["BiliTheme.suit"] = { for, name, item_id, ids, skin, loading, space_bg }
- *   $persistentStore["BiliTheme.diag"] = { version, app, arg, count, suitCache, list[] }
- *
- * 为什么要在 /select 时就预拉取素材：
- *   冷启动的 /x/resource/show/skin 响应路径上如果还要现场请求 api.bilibili.com，
- *   实测拉取耗时 ~300ms 时 App 经常不应用装扮。把这次网络请求提前到用户点衣服图标
- *   （H5 页面里，用户完全无感）之后，冷启动那条关键响应就是零网络请求。
+ *   $persistentStore["BiliTheme"] = { item_id, name, ids, cover }
  */
 const VERSION = "3.2.1-loon.3";
 const STORAGE_ROOT = "BiliTheme";
-const SUIT_CACHE_KEY = "BiliTheme.suit";
 const BASE = "/settings/theme/api";
 
 const $app = typeof $loon !== "undefined" ? "Loon"
@@ -50,9 +41,12 @@ function reply(status, data, cors = true) {
 	else $done({ response: { status, headers, body } });
 }
 
+const SUIT_CACHE_KEY = "BiliTheme.suit";
+
 /* **************** 素材预拉取 ****************
- * 与 bili-theme.response.js 里的 extractParts / fetchItemFull 保持同源。
- * 这里只负责把套装数据缓存下来，具体怎么改写响应仍旧由 response.js 决定。
+ * 在用户点衣服图标（/select）时就把整套素材拉好写进缓存，
+ * 这样冷启动的 /x/resource/show/skin 响应路径上就是零网络请求。
+ * 与 bili-theme.response.js 里的同源逻辑保持一致。
  */
 const GARB_BENEFIT = "https://api.bilibili.com/x/garb/v2/user/suit/benefit?item_id=";
 const GARB_SUIT_DETAIL = "https://api.bilibili.com/x/garb/v2/mall/suit/detail?item_id=";
@@ -78,7 +72,6 @@ function httpGet(url, timeoutMs = 6000) {
 	});
 }
 
-/** 从单个 item 数据里探测可见部件（与 response.js 一致） */
 function extractParts(d) {
 	const si = (d && d.suit_items) || {};
 	const pick = (k) => (Array.isArray(si[k]) ? si[k][0] : si[k]) || null;
@@ -103,13 +96,10 @@ async function fetchItemFull(id) {
 	return null;
 }
 
-/** 预拉取整个套装的素材并写进缓存；失败不影响注入流程本身 */
 async function prefetchSuit(itemId, ids) {
 	try {
 		const uniq = [...new Set((ids && ids.length ? ids : [itemId]).map(String).filter(Boolean))];
-		const t0 = Date.now();
 		const items = await Promise.all(uniq.map((id) => fetchItemFull(id).catch(() => null)));
-		const ms = Date.now() - t0;
 		const parts = { skin: null, loading: null, spaceBg: null };
 		let name = "";
 		for (const item of items) {
@@ -120,10 +110,10 @@ async function prefetchSuit(itemId, ids) {
 			if (!parts.spaceBg && p.spaceBg) parts.spaceBg = p.spaceBg;
 		}
 		if (!parts.skin || !parts.skin.properties?.package_url) {
-			console.log(`[BiliTheme] 预拉取失败: ${items.filter(Boolean).length}/${uniq.length} 个部件（${ms}ms）`);
-			return { ok: false, parts: items.filter(Boolean).length, total: uniq.length, ms };
+			console.log(`[BiliTheme] 预拉取失败: ${items.filter(Boolean).length}/${uniq.length} 个部件`);
+			return;
 		}
-		const suit = {
+		storeWrite(SUIT_CACHE_KEY, {
 			for: String(itemId),
 			name: name || parts.skin.name || String(itemId),
 			item_id: String(parts.skin.item_id || itemId),
@@ -131,13 +121,9 @@ async function prefetchSuit(itemId, ids) {
 			skin: parts.skin,
 			loading: parts.loading,
 			space_bg: parts.spaceBg,
-		};
-		storeWrite(SUIT_CACHE_KEY, suit);
-		console.log(`[BiliTheme] 预拉取完成:「${suit.name}」${uniq.length} 个部件, 耗时 ${ms}ms`);
-		return { ok: true, name: suit.name, parts: uniq.length, total: uniq.length, ms };
-	} catch (e) {
-		return { ok: false, error: String(e?.message || e) };
-	}
+		});
+		console.log(`[BiliTheme] 预拉取完成:「${name || parts.skin.name}」${uniq.length} 个部件`);
+	} catch {}
 }
 
 (async () => {
@@ -163,22 +149,6 @@ async function prefetchSuit(itemId, ids) {
 			reply(200, { theme: theme || null });
 			return;
 		}
-		case "/diag": {
-			const diag = storeRead("BiliTheme.diag");
-			const trace = storeRead("BiliTheme.trace");
-			reply(200, {
-				panelVersion: VERSION,
-				theme: storeRead(STORAGE_ROOT) || null,
-				suitCache: diag?.suitCache || null,
-				runs: diag?.count ?? 0,
-				lastRuns: diag?.list || [],
-				garbTrace: trace?.list || [],
-				note: diag
-					? "lastRuns 是最近 5 次 /x/resource/show/skin；garbTrace 是 App 与脚本对 api.bilibili.com/x/garb/ 的访问流水"
-					: "还没有诊断记录：response.js 可能是旧版（未更新），或安装后还没冷启动过哔哩哔哩",
-			});
-			return;
-		}
 		case "/select": {
 			const itemId = String(form.item_id || "").trim();
 			if (!itemId) {
@@ -194,11 +164,16 @@ async function prefetchSuit(itemId, ids) {
 				ids: ids,
 				cover: String(form.cover || "").trim(),
 			};
+			// 清理早期诊断版留下的两个键，避免占着持久化存储
+			try {
+				if ($app === "Quantumult X") { $prefs.removeValueForKey("BiliTheme.diag"); $prefs.removeValueForKey("BiliTheme.trace"); }
+				else { $persistentStore.write(undefined, "BiliTheme.diag"); $persistentStore.write(undefined, "BiliTheme.trace"); }
+			} catch {}
 			storeWrite(STORAGE_ROOT, theme);
 			console.log(`[BiliTheme] 主题已保存:「${theme.name}」(item_id: ${theme.item_id}, 套装部件数: ${theme.ids.length})`);
-			// 关键：在这里就把素材拉好缓存，别留到冷启动的响应路径上
-			const prefetch = await prefetchSuit(itemId, ids);
-			reply(200, { saved: true, ...theme, prefetch });
+			// 关键：在这里预拉取素材，别留到冷启动的响应路径上
+			await prefetchSuit(itemId, ids);
+			reply(200, { saved: true, ...theme });
 			return;
 		}
 		default:

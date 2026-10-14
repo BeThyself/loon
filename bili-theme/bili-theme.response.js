@@ -14,10 +14,10 @@
  *
  * MITM hostname: app.bilibili.com, www.bilibili.com
  */
-const VERSION = "3.2.1-loon.3";
+const VERSION = "3.2.1";
 const STORAGE_ROOT = "BiliTheme";
+const SUIT_CACHE_KEY = "BiliTheme.suit";
 let modified = false;
-let lastStat = null; // 最近一次素材拉取的统计，供诊断通知使用
 
 /* **************** 平台适配层 **************** */
 const $app = typeof $loon !== "undefined" ? "Loon"
@@ -51,53 +51,6 @@ function getTheme() {
 function getSettings() {
 	const theme = getTheme();
 	return { Switch: !!theme, Skin: theme || {} };
-}
-
-/* **************** 诊断通知 **************** */
-/**
- * Loon 默认不把脚本的 console.log 写进日志（新版语法的 debug 默认 false，
- * 旧版语法没有该开关），所以排查时用系统通知把关键数据直接弹出来。
- * 由插件参数 diagNotify 控制，默认关闭。
- */
-function isDiagEnabled() {
-	const a = typeof $argument === "undefined" ? undefined : $argument;
-	const v = a && typeof a === "object" ? (a.diagNotify ?? a.diag) : a;
-	if (typeof v === "boolean") return v;
-	if (typeof v === "number") return v === 1;
-	if (typeof v === "string") return v.trim().toLowerCase() === "true" || v.trim() === "1";
-	return false;
-}
-function notifyDiag(subtitle, content) {
-	try {
-		if (typeof $notification !== "undefined" && $notification?.post) {
-			$notification.post("哔哩主题 · 诊断", subtitle, content);
-		}
-	} catch {}
-}
-/**
- * 把诊断结果写进 $persistentStore，不依赖通知权限 / 插件参数，
- * 之后任意浏览器打开 https://app.bilibili.com/settings/theme/api/diag 就能看到。
- */
-function saveDiag(patch) {
-	try {
-		const prev = storeRead("BiliTheme.diag") || {};
-		let argStr;
-		try { argStr = JSON.stringify($argument) ?? String($argument); } catch { argStr = "<读取失败>"; }
-		const rec = Object.assign({ time: new Date().toISOString() }, patch);
-		const list = Array.isArray(prev.list) ? prev.list : [];
-		list.push(rec);
-		while (list.length > 5) list.shift();
-		const cachedSuit = storeRead(SUIT_CACHE_KEY);
-		storeWrite("BiliTheme.diag", {
-			version: VERSION,
-			app: $app,
-			arg: argStr,
-			count: (Number(prev.count) || 0) + 1,
-			suitCache: cachedSuit?.skin ? { for: cachedSuit.for, name: cachedSuit.name, ids: cachedSuit.ids } : null,
-			list,
-		});
-		return rec;
-	} catch { return null; }
 }
 
 /* **************** garb API **************** */
@@ -174,56 +127,35 @@ function extractAllSpaceImages(spaceBg, skin) {
 	return images;
 }
 
-let itemTrace = []; // 本次脚本执行的素材调用链，仅用于诊断
-const SUIT_CACHE_KEY = "BiliTheme.suit";
-
 /** 拉单个 item 完整数据：benefit 优先（卡池单品唯一可用），失败回落 mall/suit/detail */
 async function fetchItemFull(id) {
-	const t0 = Date.now();
 	let j = await httpGet(GARB_BENEFIT + id + "&part=emoji_package");
-	if (j && j.code === 0 && j.data && (j.data.suit_items !== undefined || j.data.properties)) {
-		itemTrace.push({ id, via: "benefit", code: j.code, ms: Date.now() - t0, name: j.data.name || null });
-		return j.data;
-	}
-	const benefitCode = j ? j.code : "req-fail";
-	console.log(`[BiliTheme] benefit 未返回可用数据 (item_id: ${id}, code: ${benefitCode})，回落 mall/suit/detail`);
+	if (j && j.code === 0 && j.data && (j.data.suit_items !== undefined || j.data.properties)) return j.data;
 	j = await httpGet(GARB_SUIT_DETAIL + id + "&part=suit");
-	if (j && j.code === 0 && j.data) {
-		itemTrace.push({ id, via: "detail", benefitCode, code: j.code, ms: Date.now() - t0, name: j.data.name || null });
-		return j.data;
-	}
-	itemTrace.push({ id, via: null, benefitCode, code: j ? j.code : "req-fail", ms: Date.now() - t0 });
-	console.log(`[BiliTheme] 素材拉取失败 (item_id: ${id}, code: ${j ? j.code : "请求失败/超时"})`);
+	if (j && j.code === 0 && j.data) return j.data;
 	return null;
 }
 
 /**
- * 获取套装数据。按 ids（同套装多个部件 item）逐个探测后合并；仅保留皮肤/加载动画/空间头图三组。
- *
- * 关键：优先命中「注入时预拉取的缓存」。
- * 冷启动的 /x/resource/show/skin 响应路径上再发网络请求会明显拖慢 App 拿到装扮配置的时间，
- * 实测拉取耗时 ~300ms 时 App 经常不应用装扮，所以要把它从关键路径上挪走。
+ * 获取套装数据。
+ * 按 ids（同套装多个部件 item）逐个探测后合并；仅保留皮肤/加载动画/空间头图三组。
  */
 async function fetchSuit(itemId, ids) {
+	/* 优先命中注入时预拉取的缓存。
+	   冷启动的响应路径上再发网络请求会推迟 App 拿到装扮配置的时间，
+	   实测拉取耗时达到数百毫秒时 App 经常不应用装扮，所以把请求挪到点衣服图标那一刻。 */
 	const cached = storeRead(SUIT_CACHE_KEY);
 	if (
 		cached && cached.skin && cached.skin.properties?.package_url &&
 		String(cached.for) === String(itemId)
 	) {
-		lastStat = { total: (cached.ids || []).length, got: (cached.ids || []).length, ms: 0, cached: true, trace: [] };
-		console.log(`[BiliTheme] 命中预拉取缓存，本次响应零网络请求:「${cached.name}」`);
 		return cached;
 	}
 
 	const uniq = [...new Set((ids && ids.length ? ids : [itemId]).map(String).filter(Boolean))];
 	const parts = { skin: null, loading: null, spaceBg: null };
 	let name = "";
-	const t0 = Date.now();
-	itemTrace = [];
 	const items = await Promise.all(uniq.map((id) => fetchItemFull(id).catch(() => null)));
-	const ms = Date.now() - t0;
-	lastStat = { total: uniq.length, got: items.filter(Boolean).length, ms, cached: false, trace: itemTrace.slice() };
-	console.log(`[BiliTheme] 素材拉取完成: ${lastStat.got}/${lastStat.total} 个部件, 耗时 ${ms}ms`);
 	for (const item of items) {
 		if (!item) continue;
 		const p = extractParts(item);
@@ -241,7 +173,6 @@ async function fetchSuit(itemId, ids) {
 		loading: parts.loading,
 		space_bg: parts.spaceBg,
 	};
-	// 顺手写回缓存，之后的响应就不用再发请求了
 	try { storeWrite(SUIT_CACHE_KEY, suit); } catch {}
 	return suit;
 }
@@ -265,18 +196,6 @@ function httpGet(url, timeoutMs = 8000) {
 			$httpClient.get({ url, headers: { "User-Agent": UA } }, done);
 		}
 	});
-}
-
-/* **************** 旁路记录：App 自己的 garb 查询 **************** */
-const TRACE_KEY = "BiliTheme.trace";
-function appendTrace(entry) {
-	try {
-		const prev = storeRead(TRACE_KEY);
-		const list = Array.isArray(prev?.list) ? prev.list : [];
-		list.push(Object.assign({ t: Date.now(), time: new Date().toISOString() }, entry));
-		while (list.length > 40) list.shift();
-		storeWrite(TRACE_KEY, { list });
-	} catch {}
 }
 
 /* **************** 注入: 原生衣服图标接管 **************** */
@@ -528,8 +447,6 @@ async function injectSkinResponse(data, skinConfig) {
 	if (!itemId) return data;
 	const suit = await fetchSuit(itemId, skinConfig.ids);
 	if (!suit?.skin) {
-		if (lastStat) lastStat.reason = `garb 接口没给到 package_url（${lastStat.got}/${lastStat.total} 个部件成功，耗时 ${lastStat.ms}ms）`;
-		else lastStat = { reason: "fetchSuit 提前返回，未发出任何素材请求" };
 		console.log(`[BiliTheme] 警告: 未获取到主题皮肤素材 (item_id: ${itemId})，已放行原始响应`);
 		return data;
 	}
@@ -824,25 +741,6 @@ async function injectSplashResponse(data, skinConfig) {
 	const path = u.pathname;
 	const settings = getSettings();
 
-	/* 0. 旁路记录：App 自己是否去 api.bilibili.com 查装扮（只记录，绝不改写） */
-	if (u.hostname === "api.bilibili.com" && path.startsWith("/x/garb/")) {
-		const ua = String($request.headers?.["User-Agent"] || $request.headers?.["user-agent"] || "");
-		let j = null;
-		try { j = JSON.parse($response.body); } catch {}
-		appendTrace({
-			hit: "garb",
-			// 脚本自身发的请求带桌面 Chrome UA，App 发的是自己的 UA —— 用它区分
-			from: /Windows NT|Chrome\/120/.test(ua) ? "脚本自身" : "App",
-			ua: ua.slice(0, 48),
-			path,
-			itemId: u.searchParams.get("item_id"),
-			code: j?.code ?? null,
-			hasData: !!j?.data,
-		});
-		$done({});
-		return;
-	}
-
 	/* 1. 官方装扮商城详情页 HTML 注入（衣服图标接管 + 双行 Toast） */
 	if (u.hostname === "www.bilibili.com" && (path.includes("/h5/mall/digital-card/home") || path.includes("/h5/mall/suit/detail"))) {
 		const raw = typeof $response.body === "string" ? $response.body : "";
@@ -869,51 +767,8 @@ async function injectSplashResponse(data, skinConfig) {
 	try { data = JSON.parse(rawBody); } catch { $done({}); return; }
 
 	if (path === "/x/resource/show/skin") {
-		const hasTheme = !!(settings.Switch && settings.Skin?.item_id);
-		const bd = data.data || {};
-		const before = {
-			userEquip: bd.user_equip?.id ?? null,
-			commonEquip: bd.common_equip ? (bd.common_equip.id ?? "yes") : null,
-			loadEquip: bd.load_equip?.id ?? null,
-			skinColors: Array.isArray(bd.skin_colors) ? bd.skin_colors.length : null,
-			equipKeys: Object.keys(bd).filter((k) => k.includes("equip")),
-		};
-		if (hasTheme) data = await injectSkinResponse(data, settings.Skin);
-		const wrote = modified ? {
-			id: data.data?.user_equip?.id ?? null,
-			ver: data.data?.user_equip?.ver ?? null,
-			pkg: String(data.data?.user_equip?.package_url || ""),
-			hasLoad: !!data.data?.load_equip,
-		} : null;
-		saveDiag({
-			hit: "skin",
-			query: u.search,
-			hasMid: !!($request.headers?.["x-bili-mid"] || $request.headers?.["X-Bili-Mid"]),
-			status: $response.status,
-			theme: hasTheme ? (settings.Skin.name || settings.Skin.item_id) : null,
-			before,
-			injected: hasTheme ? modified : false,
-			wrote,
-			cached: lastStat?.cached ?? null,
-			parts: lastStat?.got ?? null,
-			total: lastStat?.total ?? null,
-			ms: lastStat?.ms ?? null,
-			trace: lastStat?.trace ?? null,
-			reason: hasTheme
-				? (modified ? null : (lastStat?.reason || "未注入，原因未知"))
-				: "脚本跑了，但 $persistentStore['BiliTheme'] 是空的 —— 注入那一步没写进去",
-			diagFlag: isDiagEnabled(),
-		});
-		if (isDiagEnabled()) {
-			const how = lastStat?.cached
-				? "预拉取缓存（零网络请求）"
-				: `现场拉取 ${lastStat?.got}/${lastStat?.total} 个部件，耗时 ${lastStat?.ms}ms`;
-			notifyDiag(
-				!hasTheme ? "⏭ 脚本已执行，但本地没有选中主题"
-					: (modified ? `✅ 皮肤注入成功「${settings.Skin.name || "个性装扮"}」` : "❌ 皮肤未注入"),
-				!hasTheme ? "$persistentStore['BiliTheme'] 为空 —— 注入那一步没写进去"
-					: (modified ? `素材来源：${how}` : `${lastStat?.reason || "未知原因"}`),
-			);
+		if (settings.Switch && settings.Skin?.item_id) {
+			data = await injectSkinResponse(data, settings.Skin);
 		}
 	} else if (path === "/x/v2/space") {
 		if (!isSpaceBgEnabled()) {
