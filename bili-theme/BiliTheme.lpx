@@ -1,4 +1,5 @@
 #!name = 哔哩主题
+#!author = thyself
 #!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。
 #!icon = https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Bilibili.png
 #!tag = 功能增强

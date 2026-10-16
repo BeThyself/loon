@@ -1,7 +1,7 @@
 #!name=快捷搜索 Pro
 #!desc=Safari 快速切换搜索引擎（可莉版扩展）。新增京东 / 淘宝 / 拼多多 / B站 / YouTube 等 App 内直接搜索
 #!openUrl=https://github.com/BeThyself/loon/blob/main/QuickSearch/README.md
-#!author=可莉🅥[https://github.com/luestr/ProxyResource/blob/main/README.md] 修改:BeThyself
+#!author=thyself
 #!tag=功能增强
 #!system=iOS,iPadOS
 #!system_version=15
@@ -17,6 +17,7 @@
 #   3. 本插件需要 Loon 开启 MitM（已声明 hostname=duckduckgo.com）
 # 说明：可莉原版 7 条命令原样保留，额外补齐了「关键词在前」的语序；
 #       新增的 7 条命令两种语序都支持。
+# 基底：可莉 Kelee 的 QuickSearch.lpx https://kelee.one/Tool/Loon/Lpx/QuickSearch.lpx
 # ===================================================================
 
 [Rewrite]
