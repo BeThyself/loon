@@ -1,5 +1,5 @@
 #!name=快捷搜索 Pro
-#!desc=Safari 快速切换搜索引擎（可莉版扩展）。新增京东 / 淘宝 / 拼多多 / B站 / YouTube 等 App 内直接搜索
+#!desc=Safari 快速切换搜索引擎（可莉版扩展）。新增知乎 / 微博 / 京东 / 淘宝 / 拼多多 / B站 / YouTube 等 App 内搜索
 #!openUrl=https://github.com/BeThyself/loon/blob/main/QuickSearch/README.md
 #!author=thyself
 #!tag=功能增强
@@ -16,11 +16,22 @@
 #   2. Safari 地址栏输入「命令 关键词」或「关键词 命令」，回车
 #   3. 本插件需要 Loon 开启 MitM（已声明 hostname=duckduckgo.com）
 # 说明：可莉原版 7 条命令原样保留，额外补齐了「关键词在前」的语序；
-#       新增的 7 条命令两种语序都支持。
+#       新增的命令两种语序都支持。
 # 基底：可莉 Kelee 的 QuickSearch.lpx https://kelee.one/Tool/Loon/Lpx/QuickSearch.lpx
 # ===================================================================
 
 [Rewrite]
+
+# ---------------------------------------------------------------- 翻译
+# yd    关键词 (有道词典)
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=yd\+([^&]+).+/i as urlMatch then redirect(307, "https://dict.youdao.com/search?q=${urlMatch.1}")
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+yd(?:&|$)/i as urlMatch then redirect(307, "https://dict.youdao.com/search?q=${urlMatch.1}")
+# trc   关键词 (Google 译至中)
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=trc\+([^&]+).+/i as urlMatch then redirect(307, "https://translate.google.com/#view=home&op=translate&sl=auto&tl=zh-CN&text=${urlMatch.1}")
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+trc(?:&|$)/i as urlMatch then redirect(307, "https://translate.google.com/#view=home&op=translate&sl=auto&tl=zh-CN&text=${urlMatch.1}")
+# tre   关键词 (Google 译至英)
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=tre\+([^&]+).+/i as urlMatch then redirect(307, "https://translate.google.com/#view=home&op=translate&sl=auto&tl=en&text=${urlMatch.1}")
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+tre(?:&|$)/i as urlMatch then redirect(307, "https://translate.google.com/#view=home&op=translate&sl=auto&tl=en&text=${urlMatch.1}")
 
 # ---------------------------------------------------------------- 搜索
 # bd    关键词 (百度)
@@ -45,6 +56,14 @@ request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+qm(?:&|$)/i as ur
 request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=gh\+([^&]+).+/i as urlMatch then redirect(307, "https://github.com/search?q=${urlMatch.1}")
 request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+gh(?:&|$)/i as urlMatch then redirect(307, "https://github.com/search?q=${urlMatch.1}")
 
+# ---------------------------------------------------------------- 社区 (唤起 App)
+# zh    关键词 (知乎 App 内搜索)
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=zh\+([^&]+).+/i as urlMatch then redirect(307, "zhihu://search?q=${urlMatch.1}")
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+zh(?:&|$)/i as urlMatch then redirect(307, "zhihu://search?q=${urlMatch.1}")
+# wb    关键词 (微博 App 内搜索)
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=wb\+([^&]+).+/i as urlMatch then redirect(307, "sinaweibo://searchall?q=${urlMatch.1}")
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+wb(?:&|$)/i as urlMatch then redirect(307, "sinaweibo://searchall?q=${urlMatch.1}")
+
 # ---------------------------------------------------------------- 购物 (唤起 App)
 # jd    关键词 (京东 App 内搜索)
 request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=jd\+([^&]+).+/i as urlMatch then redirect(307, "openapp.jdmobile://virtual?params={\"des\":\"productList\",\"keyWord\":\"${urlMatch.1}\",\"from\":\"search\",\"category\":\"jump\"}")
@@ -64,20 +83,9 @@ request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+yt(?:&|$)/i as ur
 request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=bli\+([^&]+).+/i as urlMatch then redirect(307, "bilibili://search?keyword=${urlMatch.1}")
 request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+bli(?:&|$)/i as urlMatch then redirect(307, "bilibili://search?keyword=${urlMatch.1}")
 
-# ---------------------------------------------------------------- 社交
-# wx    关键词 (微信 · 搜狗微信，网页版，微信没有可用的搜索深链)
-request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=wx\+([^&]+).+/i as urlMatch then redirect(307, "https://weixin.sogou.com/weixinwap?query=${urlMatch.1}")
-request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+wx(?:&|$)/i as urlMatch then redirect(307, "https://weixin.sogou.com/weixinwap?query=${urlMatch.1}")
-#   └ 若只想唤起微信 App（不能带关键词，仅打开微信），把上面两行注释掉，改用下面这个：
-# request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=wx\+/i then redirect(307, "weixin://")
-
-# tg    关键词 (电报 · iOS 端无搜索深链，只能唤起 App 本身，关键词不会带过去)
-request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=tg\+/i then redirect(307, "tg://")
-request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=([^&]+)\+tg(?:&|$)/i then redirect(307, "tg://")
-
 # ---------------------------------------------------------------- 默认 (无命令)
-# 未带任何命令时走 Google。负向预查避免吃掉上面带命令的请求。
-request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=(?!(?:bd|bdimg|gimg|b|wk|qm|gh|jd|tb|pdd|yt|bli|wx|tg)\+)(?![^&]+\+(?:bd|bdimg|gimg|b|wk|qm|gh|jd|tb|pdd|yt|bli|wx|tg)(?:&|$))([^&]+).+/i as urlMatch then redirect(307, "https://www.google.com/search?q=${urlMatch.1}")
+# 未带任何命令时走 Google。前后双向负向预查，避免吃掉上面带命令的请求。
+request if ${url} ~= /^https:\/\/duckduckgo\.com\/\?q=(?!(?:yd|trc|tre|bd|bdimg|gimg|b|wk|qm|gh|zh|wb|jd|tb|pdd|yt|bli)\+)(?![^&]+\+(?:yd|trc|tre|bd|bdimg|gimg|b|wk|qm|gh|zh|wb|jd|tb|pdd|yt|bli)(?:&|$))([^&]+).+/i as urlMatch then redirect(307, "https://www.google.com/search?q=${urlMatch.1}")
 
 [MitM]
 hostname=duckduckgo.com
