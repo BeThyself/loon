@@ -10,6 +10,8 @@
 | `bili-theme/bili-theme.response.js` | 响应改写脚本（H5 注入 + 皮肤/加载动画/空间头图/开屏） |
 | `bili-theme/bili-theme.api.js` | 主题配置持久化 API（伪造 `/settings/theme/api/*`） |
 | `bili-theme/README.md` | 注入原理、开屏机制与已知行为 |
+| `QuickSearch/QuickSearch.lpx` | Safari 快捷搜索（基于可莉原版扩展，含京东/淘宝/拼多多/B站/YouTube App 内搜索） |
+| `QuickSearch/README.md` | 命令表、App 跳转 scheme 与限制说明 |
 
 ## 安装（Loon）
 
