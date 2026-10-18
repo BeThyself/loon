@@ -12,6 +12,8 @@
 | `bili-theme/README.md` | 注入原理、开屏机制与已知行为 |
 | `QuickSearch/QuickSearch.lpx` | Safari 快捷搜索（基于可莉原版扩展，含知乎/微博/京东/淘宝/拼多多/B站/YouTube App 内搜索） |
 | `QuickSearch/README.md` | 命令表、App 跳转 scheme 与限制说明 |
+| `weibo/WeiboEnhanced.plugin` | 微博净化（墨鱼 QX 版转 Loon），script-path 指向作者 CDN |
+| `weibo/README.md` | 转换对照、设置页入口与注意事项 |
 
 ## 安装（Loon）
 

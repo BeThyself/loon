@@ -1,0 +1,20 @@
+#!name = 微博净化[墨鱼版]
+#!desc = 微博 App 去广告 / 精简界面。由作者的 QuantumultX 远程重写转换而来，脚本仍走作者 CDN，自动跟随其更新。
+#!author = thyself
+#!homepage = https://ddgksf2013.top/
+#!date = 2026-10-18
+#!loon_version = 3.5.1(983)
+# 来源：@ddgksf2013 墨鱼手记《微博净化》V0.1.21（https://ddgksf2013.top/rewrite/WeiboEnhanced.conf）
+# 本文件只把 QX 段落格式转成 Loon 插件格式，JS 与原版一致，未做任何改动。
+# QX 的 script-echo-response -> Loon http-request（脚本返回 response 即不透传上游）
+# QX 的 script-analyze-echo-response -> Loon http-request + requires-body（脚本要读请求体）
+
+[MitM]
+hostname = api.weibo.cn, bootpreload.uve.weibo.com, wbapp.uve.weibo.com
+
+[Script]
+http-request ^https://api\.weibo\.cn/__qx_weibo_settings__/(?:api/config)?(?=[?\x23]|$) script-path=https://ddgksf2013.top/scripts/weibo_json.js, requires-body=true, tag=微博净化-设置页
+http-request ^https://api\.weibo\.cn/__qx_weibo_settings__/api/(?:save|reset)(?=[?\x23]|$) script-path=https://ddgksf2013.top/scripts/weibo_json.js, requires-body=true, tag=微博净化-保存设置
+http-response ^https?://api\.weibo\.cn(?:/2/statuses/container_timeline_hot|/2/guest/container_timeline_hot|/2/statuses/container_timeline_unread|/2/statuses/container_timeline|/2/live/media_homelist|/2/remind/hometab_dot|/2/remind/unread_count|/2/statuses/container_detail|/2/statuses/container_detail_comment|/2/comments/build_comments|/2/search/finder|/2/search/container_timeline|/2/search/container_discover|/2/!/was/finder/searchbarchange|/2/cardlist|/2/profile/me|/2/video/flow_stream|/2/video/flow_stream_cache|/2/push/daily|/2/push/active|/2/guest/push_active|/2/groups/allgroups/v2|/2/client/abserver_list|/2/checkin/show|/2/video/remind_info|/2/video/home_channels)(?=[?\x23]|$) script-path=https://ddgksf2013.top/scripts/weibo_json.js, requires-body=true, tag=微博净化
+http-response ^https?://bootpreload\.uve\.weibo\.com(?:/v2/ad/preload)(?=[?\x23]|$) script-path=https://ddgksf2013.top/scripts/weibo_json.js, requires-body=true, tag=微博净化-开屏广告
+http-response ^https?://wbapp\.uve\.weibo\.com(?:/wbapplua/wbpullad\.lua)(?=[?\x23]|$) script-path=https://ddgksf2013.top/scripts/weibo_json.js, requires-body=true, tag=微博净化-信息流广告
