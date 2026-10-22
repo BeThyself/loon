@@ -1,0 +1,19 @@
+#!name = 麦片屏幕翻译 会员解锁
+#!desc = 把「麦片屏幕翻译」的会员/剩余次数接口改写成永久高级订阅。仅本地展示用，不涉及真实付费。
+#!author = thyself
+#!homepage = https://github.com/BeThyself/loon/tree/main/mppmfy
+#!date = 2026-10-22
+#!loon_version = 3.5.1(983)
+#!tag = 解锁,工具,iOS
+# 来源：@ddm1023（麦片屏幕翻译）https://github.com/chxm1023/Rewrite/blob/main/mppmfy.js
+# 原脚本是 QX 的 url script-response-body，这里转成 Loon 新语法 response Script；
+# 改写逻辑与数据结构一致，另加了非 JSON 响应兜底 + 401 状态码修正，详见 mppmfy.response.js 顶部注释。
+
+[Argument]
+enabled = switch,true,type=boolean,tag=启用,desc=关掉后本插件不生效
+
+[MitM]
+hostname = youxifanyizhushou.com
+
+[Script]
+response if ${enabled} == true && ${url} ~= /^https?:\/\/youxifanyizhushou\.com\/ios\/api\/product\/user\/remain\/ios/i then script("https://raw.githubusercontent.com/BeThyself/loon/main/mppmfy/mppmfy.response.js") with tag="麦片-会员信息", requires_body=true
