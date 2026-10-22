@@ -14,6 +14,8 @@
 | `QuickSearch/README.md` | 命令表、App 跳转 scheme 与限制说明 |
 | `weibo/WeiboEnhanced.plugin` | 微博净化（墨鱼 QX 版转 Loon），script-path 指向作者 CDN |
 | `weibo/README.md` | 转换对照、设置页入口与注意事项 |
+| `mppmfy/MaipianVIP.plugin` | 麦片屏幕翻译会员解锁（QX 脚本转 Loon），脚本由本仓库托管 |
+| `mppmfy/README.md` | 改写逻辑、已知限制与来源 |
 
 ## 安装（Loon）
 
