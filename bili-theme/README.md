@@ -1,11 +1,18 @@
 # 哔哩主题（bili-theme）
 
-原项目：[chaoscard/bili-theme](https://github.com/chaoscard/bili-theme) — 本仓库为 **v4.1.0 镜像**，
-脚本内容与原版逐字节一致（md5 见下），仅把 `script-path` 改成本仓库地址，便于自持。
+原项目：[chaoscard/bili-theme](https://github.com/chaoscard/bili-theme)（上游 GitHub 仓库已不可访问），
+当前发行站：https://bili-theme.66617173.xyz （Cloudflare Workers）。
+
+本仓库为 **v6.0.0 镜像**，脚本内容与原版一致，仅改三处以便自持：
+
+- `script-path` 指向本仓库 raw 地址（`.lpx` 内两处）；
+- `DATABASE_URL` 指向本仓库的下架装扮离线库 `garb-database.json`（`bili-theme.response.js` 内一处）；
+- `#!author` 署名 `thyself`（按仓库约定，不保留原作者名，致谢见文末）。
 
 ```
-bili-theme.response.js  62c68b881a2670e1a2e4637ced4e392e
-bili-theme.api.js       474ce4ab21a884972ab5a1b0857fa991
+bili-theme.response.js  a78efac191a35759171590f1735cc00c  (仅 DATABASE_URL 改为自持地址，其余与原版一致)
+bili-theme.api.js       452cb16d9308d071662405732a8670be  (与原版逐字节一致)
+garb-database.json      90a8fb7d9eb44aaeca75205294e139df  (下架装扮离线库，v2026110705 / 660 套)
 ```
 
 ---
@@ -18,12 +25,15 @@ bili-theme.api.js       474ce4ab21a884972ab5a1b0857fa991
 装扮商城 H5 页  --注入 JS-->  点衣服图标  --POST-->  /settings/theme/api/select
                                                           | 被 api.js 拦截
                                                           v
-                                              $persistentStore["BiliTheme"]
+                                              $persistentStore 多键存储
+                                        BiliTheme / BiliThemeSpace
+                                        BiliThemeSplash / BiliThemeOffShelf
 
 App 原生请求 ----------------------------------------------+
   /x/resource/show/skin    --改写--> user_equip + load_equip   主题皮肤 / 加载动画
   /x/v2/space              --改写--> images.imgUrl + 轮播列表   个人空间头图
   /x/v2/splash/brand/list  --改写--> list + preload            开屏画面
+  /x/garb/vas/search       --补齐--> 下架绝版装扮增量合并       商城搜索（v6 新增）
 ```
 
 ### 1. 素材全部来自 B 站真实 API
@@ -53,7 +63,7 @@ App 原生请求 ----------------------------------------------+
 ### 3. api.js 伪造后端
 
 拦截 `app.bilibili.com/settings/theme/api/{select,config}`。**这条路径真实不存在，请求不出网。**
-把 `{item_id, name, ids, cover, splashes?, spaces?, act_id?}` 写进 `$persistentStore["BiliTheme"]`。
+按主题 / 空间头图 / 开屏画面三块分别写入 `$persistentStore`（`BiliTheme` / `BiliThemeSpace` / `BiliThemeSplash`）。
 `reply()` 兼容 QX 与 Loon/Surge 两端不同的 `$done` 格式。
 
 ### 4. 三处响应改写
@@ -62,17 +72,15 @@ App 原生请求 ----------------------------------------------+
 |---|---|---|
 | `/x/resource/show/skin` | `user_equip`、`skin_colors`（push 一条）、`load_equip` | `side_bg_color` **必须排在 `color_second_page` 之后**，否则 App 解析失败；`"true"/"false"` 字符串要转布尔 |
 | `/x/v2/space` | `images.imgUrl` / `night_imgurl` / `has_garb` + `collection_top_simple.top.result` | 明确 `show_in_collection:false` + `show_in_space:true`，只当空间头图不污染收藏馆；仅当 `vmid == x-bili-mid` 才改 |
-| `/x/v2/splash/brand/list` | `data.list`（自选库）+ `data.preload`（强制调度） | 见下 |
+| `/x/v2/splash/brand/list` | `data.list`（自选库）+ `data.preload`（强制调度） | 从请求的 `selected` 读出用户勾选的 12 个开屏 ID，对齐覆盖；`fillImagesMeta()` 拉真实 ETag（当 MD5）与 Content-Range 精确字节数；无全屏竖版立绘时整段熔断，保持官方原生开屏；原生未购买自选开屏返回 `code:-400`，这里强制改 `code:0` |
 
-**v4.1.0 的开屏注入重写了**，与 3.x 完全不同：
+### 5. 下架装扮搜索补齐（v6.0.0 新增）
 
-- 从请求的 `selected` 参数读出**用户在 App 内勾选的 12 个开屏 ID**，把装扮物料对齐覆盖到这些 ID 上，
-  保证客户端本地选择器 100% 命中。素材多于勾选数量时自动补齐借壳 ID。
-- 调 `fillImagesMeta()` **真去拉每张图的 ETag（当 MD5）和 Content-Range 精确字节数**，
-  Range 请求探测，结果缓存在 `$persistentStore["BiliThemeMeta"]`（最多留 25 条）。
-  不再是 3.x 那种 `thumb_hash: ""` / `size: 200000` 的假元数据。
-- **安全熔断**：若没有真正的全屏竖版立绘，**整个跳过开屏注入**，保持官方原生开屏。
-- 原生接口在未购买自选开屏时返回 `code: -400`，这里强制改写成 `code: 0` / `message: "0"` 让它入库。
+- 拦截 `api.bilibili.com/x/garb/vas/search`，把离线库 `garb-database.json` 里的下架绝版装扮
+  按关键词匹配后，**差集去重**增量合并进原生搜索结果（五元组 `[id, name, cover, type, lottery_id]`）。
+- 库文件镜像自上游，本仓库已改自持地址；首次命中时毫秒级本地检索，未初始化才回源拉取，
+  之后 7 天静默周期比对 `version` 做增量更新。
+- 插件参数 `offShelf` 可整体关闭此功能。
 
 ---
 
@@ -80,15 +88,16 @@ App 原生请求 ----------------------------------------------+
 
 1. Loon → 配置 → 插件 → 添加：
    `https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/BiliTheme.lpx`
-2. MitM 已开启，hostname 含 `app.bilibili.com, www.bilibili.com`
+2. MitM 已开启，hostname 含 `app.bilibili.com, www.bilibili.com, api.bilibili.com`
 3. 重启哔哩哔哩 App
 
 ### 插件参数
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `spaceBg` | **true**（4.x 起） | 个人空间头图注入 |
-| `splashBg` | true | 开屏画面注入 |
+| `spaceBg` | true | 个人空间头图注入 |
+| `splashBg` | true | 开屏画面装扮注入 |
+| `offShelf` | true | 获取下架装扮（商城搜索时补齐下架绝版装扮） |
 
 > **开屏要先手动设置一次**：App →「设置 - 开屏画面设置」→ 任意勾选 12 张 → 保存开启自选模式。
 > 之后装扮开屏才能全自动生效与随机轮播。若某次开屏不生效，回该页面重新选 12 张即可。
@@ -118,4 +127,5 @@ http-response ^https?:\/\/app\.bili(bili\.com|api\.net)\/x\/v2\/(splash\/(brand\
 
 ## 版权
 
-业务逻辑版权归原作者 [chaoscard](https://github.com/chaoscard/bili-theme)。
+业务逻辑版权归原作者 [chaoscard](https://github.com/chaoscard)（bili-theme 项目）所有。
+本仓库仅作镜像自持，署名按仓库约定改为 `thyself`。

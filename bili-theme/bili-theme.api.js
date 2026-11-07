@@ -4,15 +4,18 @@
  * 哔哩主题 — 主题配置持久化 API（http-request 脚本，五端通用）
  *
  * 端点:
- *   POST /settings/theme/api/select  body: item_id=xx[&ids=a,b,c][&name=xx][&cover=xx][&splashes=json][&act_id=xx]
+ *   POST /settings/theme/api/select  body: item_id=xx[&ids=a,b,c][&name=xx][&splashes=json][&spaces=json][&act_id=xx][&lottery_id=xx]
  *   GET  /settings/theme/api/config  → 当前选中的主题信息
  *
- * 存储结构:
- *   $persistentStore["BiliTheme"]     = { item_id, name, ids, cover, splashes?, spaces?, act_id? }
- *   $persistentStore["BiliThemeMeta"] = { [imageUrl]: { hash, size } }（轻量开屏素材元数据持久化缓存）
+ * 存储结构 (方案 A 独立键):
+ *   $persistentStore["BiliTheme"]       = { item_id, name, ids, act_id?, lottery_id? } (核心主题与皮肤)
+ *   $persistentStore["BiliThemeSpace"]  = { spaces: [...], act_id?, lottery_id? } (个人空间头图)
+ *   $persistentStore["BiliThemeSplash"] = { splashes: [...] } (开屏画面立绘，就地自包含 hash 与 size)
  */
-const VERSION = "4.1.0";
+const VERSION = "6.0.0";
 const STORAGE_ROOT = "BiliTheme";
+const STORAGE_SPACE = "BiliThemeSpace";
+const STORAGE_SPLASH = "BiliThemeSplash";
 const BASE = "/settings/theme/api";
 
 const $app = typeof $loon !== "undefined" ? "Loon"
@@ -84,9 +87,14 @@ function reply(status, data, cors = true) {
 
 	switch (sub) {
 		case "/config": {
-			const d = storeRead(STORAGE_ROOT);
-			const theme = d?.item_id ? d : (d?.config?.skin || null);
-			reply(200, { theme: theme || null });
+			const theme = storeRead(STORAGE_ROOT);
+			const spaceData = storeRead(STORAGE_SPACE);
+			const splashData = storeRead(STORAGE_SPLASH);
+			reply(200, {
+				theme: theme?.item_id ? theme : null,
+				spaces: spaceData?.spaces || null,
+				splashes: splashData?.splashes || null,
+			});
 			return;
 		}
 		case "/select": {
@@ -112,19 +120,39 @@ function reply(status, data, cors = true) {
 					if (Array.isArray(parsed) && parsed.length > 0) spaces = parsed;
 				} catch {}
 			}
+
+			// 1. 核心主题与皮肤 (BiliTheme)
 			const theme = {
 				item_id: itemId,
 				name: String(form.name || "个性装扮").trim(),
 				ids: ids,
-				cover: String(form.cover || "").trim(),
 			};
-			if (splashes) theme.splashes = splashes;
-			if (spaces) theme.spaces = spaces;
 			if (form.act_id) theme.act_id = String(form.act_id).trim();
+			if (form.lottery_id) theme.lottery_id = String(form.lottery_id).trim();
 			storeWrite(STORAGE_ROOT, theme);
-			const extraDesc = (splashes ? `, 典藏全屏开屏: ${splashes.length}张` : "") + (spaces ? `, 空间高清头图: ${spaces.length}套` : "");
+
+			// 2. 个人空间头图 (BiliThemeSpace)
+			if (spaces && spaces.length > 0) {
+				const spaceData = { spaces };
+				if (form.act_id) spaceData.act_id = String(form.act_id).trim();
+				if (form.lottery_id) spaceData.lottery_id = String(form.lottery_id).trim();
+				storeWrite(STORAGE_SPACE, spaceData);
+			} else {
+				storeWrite(STORAGE_SPACE, {});
+			}
+
+			// 3. 开屏画面立绘 (BiliThemeSplash)
+			if (splashes && splashes.length > 0) {
+				storeWrite(STORAGE_SPLASH, { splashes });
+			} else {
+				storeWrite(STORAGE_SPLASH, {});
+			}
+
+			const dynCount = (spaces || []).filter((x) => x && x.isDynamic).length;
+			const spaceDesc = spaces ? `, 空间头图: ${spaces.length}套${dynCount > 0 ? `(${dynCount}套动态)` : ""}` : "";
+			const extraDesc = (splashes ? `, 典藏全屏开屏: ${splashes.length}张` : "") + spaceDesc;
 			console.log(`[BiliTheme] 主题已保存:「${theme.name}」(item_id: ${theme.item_id}, 套装部件数: ${theme.ids.length}${extraDesc})`);
-			reply(200, { saved: true, ...theme });
+			reply(200, { saved: true, ...theme, spaces, splashes });
 			return;
 		}
 		default:

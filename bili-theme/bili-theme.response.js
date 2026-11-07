@@ -5,19 +5,50 @@
  *
  * 拦截范围:
  *   www.bilibili.com/h5/mall/(digital-card/home|suit/detail) → 原生衣服图标接管与注入
+ *   api.bilibili.com/x/garb/vas/search                      → 官方商城搜索下架装扮自动补齐
  *   app.bilibili.com/x/resource/show/skin                   → 注入主题皮肤 + 加载动画
  *   app.bilibili.com/x/v2/space                             → 注入个人空间头图
  *   app.bilibili.com/x/v2/splash/brand/list                 → 注入开屏画面装扮
  *
- * 存储结构:
- *   $persistentStore["BiliTheme"]     = { item_id, name, ids, cover, splashes?, spaces?, act_id? }
- *   $persistentStore["BiliThemeMeta"] = { [imageUrl]: { hash, size } }（轻量开屏素材元数据持久化缓存）
+ * 存储结构 (独立解耦多键):
+ *   $persistentStore["BiliTheme"]          = { item_id, name, ids, act_id?, lottery_id? } (核心主题与皮肤)
+ *   $persistentStore["BiliThemeSpace"]     = { spaces: [...], act_id?, lottery_id? } (个人空间头图)
+ *   $persistentStore["BiliThemeSplash"]    = { splashes: [...] } (开屏画面立绘，就地自包含 hash 与 size)
+ *   $persistentStore["BiliThemeOffShelf"]  = { version, updated_at, total, items: [...] } (下架装扮本地离线库)
  *
- * MITM hostname: app.bilibili.com, www.bilibili.com
+ * MITM hostname: app.bilibili.com, www.bilibili.com, api.bilibili.com
  */
-const VERSION = "4.1.0";
+const VERSION = "6.0.0";
 const STORAGE_ROOT = "BiliTheme";
+const STORAGE_SPACE = "BiliThemeSpace";
+const STORAGE_SPLASH = "BiliThemeSplash";
+const STORAGE_OFFSHELF = "BiliThemeOffShelf";
+const DATABASE_URL = "https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/garb-database.json";
 let modified = false;
+
+/**
+ * 获取下架装扮关联资产映射 [skinId, spaceBgId, loadingId]
+ * 优先读取本地持久化离线库 BiliThemeOffShelf.parts，未初始化时自动网络拉取并缓存
+ */
+async function getArchiveComponents(itemId) {
+	if (!itemId) return null;
+	let db = storeRead(STORAGE_OFFSHELF);
+	if (!db || !db.parts) {
+		try {
+			const remote = await httpGet(DATABASE_URL, 3500);
+			if (remote && remote.parts) {
+				db = remote;
+				db.lastCheck = Date.now();
+				storeWrite(STORAGE_OFFSHELF, db);
+			}
+		} catch (e) {}
+	}
+	if (db && db.parts) {
+		return db.parts[Number(itemId)] || db.parts[String(itemId)] || null;
+	}
+	return null;
+}
+
 
 /* **************** 平台适配层 **************** */
 const $app = typeof $loon !== "undefined" ? "Loon"
@@ -105,10 +136,10 @@ function extractParts(d) {
 	const pick = (k) => (Array.isArray(si[k]) ? si[k][0] : si[k]) || null;
 	const p = (d && d.properties) || {};
 	const own = { item_id: String(d?.item_id ?? ""), name: d?.name || "", properties: p };
-	const gSkin = pick("skin");
+	const gSkin = pick("skin") || pick("suit");
 	const skin = gSkin?.properties?.package_url ? gSkin : (p.package_url ? own : null);
-	const gLoad = pick("loading");
-	const loading = gLoad?.properties?.loading_url ? gLoad : (p.loading_url ? own : null);
+	const gLoad = pick("loading") || pick("loading_frame");
+	const loading = (gLoad?.properties?.loading_url || gLoad?.properties?.loading_frame_url) ? gLoad : ((p.loading_url || p.loading_frame_url) ? own : null);
 	const gBg = pick("space_bg");
 	const bp = gBg?.properties || {};
 	const spaceBg = (bp.image1_landscape || bp.image1_portrait || gBg?.images) ? gBg
@@ -165,7 +196,14 @@ async function fetchItemFull(id) {
  * 按 ids（同套装多个部件 item）逐个探测后合并；仅保留皮肤/加载动画/空间头图三组。
  */
 async function fetchSuit(itemId, ids) {
-	const uniq = [...new Set((ids && ids.length ? ids : [itemId]).map(String).filter(Boolean))];
+	let uniq = [...new Set((ids && ids.length ? ids : [itemId]).map(String).filter(Boolean))];
+	const comp = await getArchiveComponents(itemId);
+	if (comp) {
+		const sId = String(comp[0] || itemId);
+		const bId = comp[1] ? String(comp[1]) : null;
+		const lId = comp[2] ? String(comp[2]) : null;
+		uniq = [...new Set([sId, bId, lId, ...uniq].filter(Boolean))];
+	}
 	const parts = { skin: null, loading: null, spaceBg: null };
 	let name = "";
 	for (const id of uniq) {
@@ -214,12 +252,16 @@ const DETAIL_INJECT_SNIPPET = `<style id="bili-theme-inject-style">
 .bt-toast.bt-show{opacity:1;transform:translate(-50%,-50%) scale(1)}
 .bt-toast-title{font-size:14.5px;font-weight:600;color:#fff;line-height:1.4}
 .bt-toast-name{font-size:13px;font-weight:500;color:rgba(255,255,255,.88);margin-top:4px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.bt-toast-assets{font-size:13px;font-weight:500;color:rgba(255,255,255,.8);margin-top:5px;line-height:1.4}
 .bt-toast-tip{font-size:13px;font-weight:500;color:rgba(255,255,255,.8);margin-top:5px;line-height:1.4}
+.bt-toast-subtip{font-size:13px;font-weight:500;color:rgba(255,255,255,.8);margin-top:5px;line-height:1.4}
 </style>
 <div class="bt-toast" id="btToast">
   <div class="bt-toast-title" id="btToastTitle"></div>
   <div class="bt-toast-name" id="btToastName"></div>
+  <div class="bt-toast-assets" id="btToastAssets"></div>
   <div class="bt-toast-tip" id="btToastTip"></div>
+  <div class="bt-toast-subtip" id="btToastSubtip"></div>
 </div>
 <script>
 (function(){
@@ -227,15 +269,66 @@ if(window.__biliThemeInjected)return;
 window.__biliThemeInjected=true;
 var cur=null;
 var curActiveLotteryId=null;
-function toast(title,name,tip){
-  var t=document.getElementById("btToast");var tt=document.getElementById("btToastTitle");var tn=document.getElementById("btToastName");var tp=document.getElementById("btToastTip");
+function toast(title,name,assets,tip,subtip){
+  var t=document.getElementById("btToast");var tt=document.getElementById("btToastTitle");var tn=document.getElementById("btToastName");var ta=document.getElementById("btToastAssets");var tp=document.getElementById("btToastTip");var ts=document.getElementById("btToastSubtip");
   if(!t||!tt)return;
   tt.textContent=title||"";
   if(tn){tn.textContent=name||"";tn.style.display=name?"block":"none";}
+  if(ta){ta.textContent=assets||"";ta.style.display=assets?"block":"none";}
   if(tp){tp.textContent=tip||"";tp.style.display=tip?"block":"none";}
+  if(ts){ts.textContent=subtip||"";ts.style.display=subtip?"block":"none";}
   t.classList.add("bt-show");
   clearTimeout(t._tm);
-  t._tm=setTimeout(function(){t.classList.remove("bt-show")},tip?3500:2600);
+  t._tm=setTimeout(function(){t.classList.remove("bt-show")},subtip?4200:(tip?3800:(assets?3500:2600)));
+}
+function parseSuitDetail(d,fallbackId){
+  if(!d)return null;
+  var itemId = String(d.item_id || fallbackId || "");
+  var comp = (typeof window!=="undefined"&&window.__BT_PARTS)?window.__BT_PARTS:null;
+  var si=d.suit_items||{};
+  var sk=(Array.isArray(si.skin)?si.skin[0]:si.skin)||(Array.isArray(si.suit)?si.suit[0]:si.suit);
+  var ld=(Array.isArray(si.loading)?si.loading[0]:si.loading)||(Array.isArray(si.loading_frame)?si.loading_frame[0]:si.loading_frame);
+  var spBg=(Array.isArray(si.space_bg)?si.space_bg[0]:si.space_bg);
+  
+  if (comp) {
+    if (!sk && comp[0]) sk = { item_id: comp[0] };
+    if (!spBg && comp[1]) spBg = { item_id: comp[1] };
+    if (!ld && comp[2]) ld = { item_id: comp[2] };
+  }
+
+  var realId=(sk&&sk.item_id)||d.item_id||fallbackId;
+  var allIds=[d.item_id,sk&&sk.item_id,ld&&ld.item_id,fallbackId,spBg&&spBg.item_id].filter(Boolean).join("&");
+  var spImages=[];
+  var normalSpaces=[];
+  if(spBg&&spBg.properties){
+    for(var pi=1;pi<=15;pi++){
+      var port=spBg.properties["image"+pi+"_portrait"];
+      var land=spBg.properties["image"+pi+"_landscape"];
+      if(pi<=12&&port&&spImages.indexOf(port)===-1)spImages.push(port);
+      if(land||port){
+        normalSpaces.push({
+          landscape:land||port,
+          name:(d.name||"个性装扮")+" #"+pi,
+          isDynamic:false
+        });
+      }
+    }
+  }
+  var splashes=spImages.map(function(iu,idx){
+    return {url:iu,hash:"",size:0,name:(d.name||"个性装扮")+" #"+(idx+1),isPortrait:true};
+  });
+  var hasSkin=Boolean((sk&&(sk.item_id||(sk.properties&&sk.properties.package_url)))||(d.properties&&d.properties.package_url)||(sk&&sk.properties&&sk.properties.package_url));
+  var hasLoading=Boolean((ld&&(ld.item_id||(ld.properties&&(ld.properties.loading_url||ld.properties.loading_frame_url))))||(d.properties&&(d.properties.loading_url||d.properties.loading_frame_url||d.properties.item_id_loading)));
+  return {
+    suit_id:itemId,
+    item_id:String(realId),
+    ids:allIds||String(realId),
+    name:d.name||(sk&&sk.name)||"个性装扮",
+    splashes:splashes.length>0?splashes:null,
+    spaces:normalSpaces.length>0?normalSpaces:null,
+    hasSkin:hasSkin,
+    hasLoading:hasLoading
+  };
 }
 var _f=window.fetch;
 if(typeof _f==="function"){
@@ -248,31 +341,51 @@ if(typeof _f==="function"){
         if(m&&m[1]&&Number(m[1])!==0)curActiveLotteryId=String(m[1]);
       }
       if(u.indexOf("garb/v2/mall/suit/detail")!==-1||u.indexOf("garb/v2/user/suit/benefit")!==-1){
-        res.clone().json().then(function(j){
-          var d=j&&j.data;if(!d)return;
-          var si=d.suit_items||{};var sk=Array.isArray(si.skin)?si.skin[0]:si.skin;
-          var id=(sk&&sk.item_id)||d.item_id;
-          var allIds=[d.item_id,sk&&sk.item_id,si.space_bg&&si.space_bg[0]&&si.space_bg[0].item_id].filter(Boolean).join("&");
-          var spBg=Array.isArray(si.space_bg)?si.space_bg[0]:si.space_bg;
-          var spImages=[];
-          if(spBg&&spBg.properties){
-            for(var pi=1;pi<=12;pi++){
-              var port=spBg.properties["image"+pi+"_portrait"];
-              if(port&&spImages.indexOf(port)===-1)spImages.push(port);
+        res.clone().json().then(async function(j){
+          if(j&&j.data){
+            var pItem=parseSuitDetail(j.data);
+            if(pItem&&pItem.item_id){
+              var targetId=Number(pItem.item_id);
+              var comp=(typeof window!=="undefined"&&window.__BT_PARTS)?window.__BT_PARTS:null;
+              if(comp){
+                var sId=comp[0]||targetId;
+                var bId=comp[1]||0;
+                var lId=comp[2]||0;
+                var candIds=[String(sId)];
+                if(bId)candIds.push(String(bId));
+                if(lId)candIds.push(String(lId));
+                pItem.ids=candIds.join("&");
+                pItem.item_id=String(sId);
+                if(lId)pItem.hasLoading=true;
+                if((!pItem.spaces||!pItem.splashes)&&bId){
+                  try{
+                    var bResp=await _f("https://api.bilibili.com/x/garb/v2/mall/suit/detail?item_id="+bId+"&part=suit").then(function(x){return x.json();});
+                    var bProp=(bResp&&bResp.code===0&&bResp.data&&bResp.data.properties)||{};
+                    var spImages=[];
+                    var normalSpaces=[];
+                    for(var pi=1;pi<=15;pi++){
+                      var port=bProp["image"+pi+"_portrait"];
+                      var land=bProp["image"+pi+"_landscape"];
+                      if(pi<=12&&port&&spImages.indexOf(port)===-1)spImages.push(port);
+                      if(land||port){
+                        normalSpaces.push({
+                          landscape:land||port,
+                          name:(pItem.name||"个性装扮")+" #"+pi,
+                          isDynamic:false
+                        });
+                      }
+                    }
+                    if(normalSpaces.length>0)pItem.spaces=normalSpaces;
+                    if(spImages.length>0){
+                      pItem.splashes=spImages.map(function(iu,idx){
+                        return {url:iu,hash:"",size:0,name:(pItem.name||"个性装扮")+" #"+(idx+1),isPortrait:true};
+                      });
+                    }
+                  }catch(e){}
+                }
+              }
+              cur=pItem;
             }
-          }
-          var splashes=spImages.map(function(iu,idx){
-            return {url:iu,hash:"",size:0,name:(d.name||"个性装扮")+" #"+(idx+1),isPortrait:true};
-          });
-          if(id){
-            cur={
-              suit_id:String(d.item_id||""),
-              item_id:String(id),
-              ids:allIds||String(id),
-              name:d.name||(sk&&sk.name)||"个性装扮",
-              cover:(d.properties&&d.properties.image_cover)||(sk&&sk.properties&&sk.properties.image_cover)||"",
-              splashes:splashes.length>0?splashes:null
-            };
           }
         }).catch(function(){})
       }
@@ -340,11 +453,46 @@ async function handleInject(){
         target=cl.find(function(x){return Number(x&&x.redeem_item_type)===5});
       }
       var splashes=[];
-      var curLid=String(matchedLottery?matchedLottery.lottery_id:(curActiveLotteryId||p.get("lottery_id")||""));
+      var curLid=String(matchedLottery?matchedLottery.lottery_id:(target?target.lottery_id:(curActiveLotteryId||p.get("lottery_id")||"")));
       if(curLid&&Number(curLid)!==0){
         try{
           var lResp=await _f("https://api.bilibili.com/x/vas/dlc_act/lottery_home_detail?act_id="+act+"&lottery_id="+curLid).then(function(x){return x.json()});
           var lItems=(lResp&&lResp.data&&lResp.data.item_list)||[];
+          var clList=(lResp&&lResp.data&&lResp.data.collect_list&&lResp.data.collect_list.collect_infos)||[];
+          var actRights=(lResp&&lResp.data&&lResp.data.act_rights_infos)||[];
+
+          // 建立官方视口位置 (location map) 映射表（含图片唯一哈希归一化，平铺无块级函数）
+          var locMap={};
+          for(var ari=0;ari<actRights.length;ari++){
+            var arRes=actRights[ari]&&actRights[ari].resource;
+            if(arRes){
+              var arClean=String(arRes).split("@")[0].split("?")[0];
+              var arM=String(arRes).match(/@([0-9]+-[0-9]+-[0-9]+-[0-9]+)a?/);
+              if(arM){
+                locMap[arClean]=arM[1];
+                var h1=arClean.match(/([a-f0-9]{32,40})/i);
+                if(h1)locMap[h1[1].toLowerCase()]=arM[1];
+              }
+            }
+          }
+          for(var cli=0;cli<clList.length;cli++){
+            var cItem=clList[cli]&&clList[cli].card_item;
+            var cTypeInfo=cItem&&cItem.card_type_info;
+            if(cTypeInfo){
+              var cSbAnim=(cTypeInfo.space_background&&cTypeInfo.space_background.animation)||(cTypeInfo.content&&cTypeInfo.content.animation);
+              if(cSbAnim&&cSbAnim.location){
+                var cOvImg=String(cTypeInfo.overview_image||"").split("@")[0].split("?")[0];
+                if(cOvImg){
+                  locMap[cOvImg]=cSbAnim.location;
+                  var h2=cOvImg.match(/([a-f0-9]{32,40})/i);
+                  if(h2)locMap[h2[1].toLowerCase()]=cSbAnim.location;
+                }
+                if(cTypeInfo.id)locMap[String(cTypeInfo.id)]=cSbAnim.location;
+                if(cTypeInfo.name)locMap[cTypeInfo.name]=cSbAnim.location;
+              }
+            }
+          }
+
           var poolCards=[];
           for(var li=0;li<lItems.length;li++){
             var lit=lItems[li];
@@ -352,15 +500,27 @@ async function handleInject(){
             var sc=Number((lit&&lit.item_scarcity)||(lci&&lci.card_scarcity)||0);
             var ct=Number((lci&&lci.card_type)||(lit&&lit.card_type)||0);
             var img=(lci&&(lci.card_img||lci.card_img_download))||"";
+            var vlist=lci.video_list||lit.video_list||null;
+            var cName=lci.card_name||lit.name||"卡牌立绘";
+            var cleanImg=String(img).split("@")[0].split("?")[0];
+            var hCard=cleanImg.match(/([a-f0-9]{32,40})/i);
+            var hKey=hCard?hCard[1].toLowerCase():"";
+            var loc=lci.location||lit.location||(hKey&&locMap[hKey])||locMap[cleanImg]||locMap[String(lci.card_type_id||"")]||locMap[cName]||"0-0-1079-1079";
+
             if(img){
               poolCards.push({
                 url:img,
                 hash:"",
                 size:0,
-                name:lci.card_name||lit.name||"卡牌立绘",
+                name:cName,
                 isPortrait:true,
                 scarcity:sc,
-                cardType:ct
+                cardType:ct,
+                videoUrls:Array.isArray(vlist)&&vlist.length>0?vlist:null,
+                location:loc,
+                duration:15,
+                width:Number(lci.width||1242),
+                height:Number(lci.height||1863)
               });
             }
           }
@@ -377,32 +537,124 @@ async function handleInject(){
             if(!combined.some(function(x){return x.url===pc.url}))combined.push(pc);
           }
           if(combined.length>0){
-            splashes=combined;
+            splashes=(combined||[]).slice(0,12).map(function(c,idx){
+              return {
+                url:String(c.url||"").split("@")[0].split("?")[0],
+                hash:"",
+                size:0,
+                name:c.name||("全屏开屏 #"+(idx+1)),
+                isPortrait:true
+              };
+            });
           }
         }catch(e){}
       }
-      // 提取前 12 张作为高质量开屏画面
-      if(splashes.length>12){
-        splashes=splashes.slice(0,12);
-      }
-      // 提取前 15 张高质量大卡并使用 CDN 参数裁切为空间横图 + 竖图轮播
+      // 提取前 15 张高质量大卡并使用官方视口参数构造空间头图（支持动态视频，免去冗余 portrait）
       var spaces=(combined||[]).slice(0,15).map(function(c){
-        var raw=String(c.url||"").replace(/@[^@]+$/,"");
-        return {
-          landscape: raw+"@0-0-1242-1073a",
-          portrait: raw,
-          name: c.name||"卡牌头图"
+        var raw=String(c.url||"").split("@")[0].split("?")[0];
+        var loc=c.location||"0-0-1079-1079";
+        var locM=String(loc).match(/^[0-9]+-([0-9]+)-([0-9]+)-([0-9]+)$/);
+        var yOff=locM?locM[1]:"0";
+        var cW=locM?locM[2]:"1079";
+        var cH=locM?locM[3]:"1079";
+        var isDyn=Boolean(c.videoUrls&&c.videoUrls.length>0);
+        var spItem={
+          landscape: raw+"@0-"+yOff+"-"+cW+"-"+cH+"a",
+          name: c.name||"卡牌头图",
+          isDynamic: isDyn,
+          location: loc
         };
+        if(isDyn&&c.videoUrls&&c.videoUrls.length>0)spItem.videoUrls=c.videoUrls;
+        if(c.duration)spItem.duration=c.duration;
+        return spItem;
       });
       if(target){
+        var curLotteryId=String(target.lottery_id||curLid||"");
+        var poolItems=cl.filter(function(x){
+          if(Number(x&&x.redeem_item_type)!==5)return false;
+          if(curLotteryId&&String(x&&x.lottery_id)===curLotteryId)return true;
+          if(matchedLottery&&matchedLottery.lottery_name){
+            var rn=x.redeem_item_name||x.name||"";
+            if(rn.indexOf(matchedLottery.lottery_name)!==-1||matchedLottery.lottery_name.indexOf(rn)!==-1)return true;
+          }
+          return false;
+        });
+        if(poolItems.length===0)poolItems=[target];
+
+        var allCandidateIds=[];
+        poolItems.forEach(function(it){
+          var subIds=String(it.redeem_item_id||"").split("&").map(function(s){return s.trim()}).filter(Boolean);
+          subIds.forEach(function(cid){
+            if(allCandidateIds.indexOf(cid)===-1)allCandidateIds.push(cid);
+          });
+        });
+
+        var cpHasLoading=false;
+        var cpHasSkin=false;
+        var skinId=null;
+        try{
+          var probeDatas=await Promise.all(allCandidateIds.map(function(cid){
+            return _f("https://api.bilibili.com/x/garb/v2/user/suit/benefit?item_id="+cid+"&part=suit")
+              .then(function(x){return x.json()})
+              .then(function(j){return (j&&j.data)||null})
+              .catch(function(){return null});
+          }));
+          for(var pbi=0;pbi<probeDatas.length;pbi++){
+            var pData=probeDatas[pbi];
+            var cid=allCandidateIds[pbi];
+            if(!pData)continue;
+            var pSi=pData.suit_items||{};
+            var pSk=(Array.isArray(pSi.skin)?pSi.skin[0]:pSi.skin)||(Array.isArray(pSi.suit)?pSi.suit[0]:pSi.suit);
+            var pLd=(Array.isArray(pSi.loading)?pSi.loading[0]:pSi.loading)||(Array.isArray(pSi.loading_frame)?pSi.loading_frame[0]:pSi.loading_frame);
+            var pProp=pData.properties||{};
+
+            if(
+              Number(pData.part_id)===10||
+              (pLd&&(pLd.item_id||(pLd.properties&&(pLd.properties.loading_url||pLd.properties.loading_frame_url))))||
+              (pProp&&(pProp.loading_url||pProp.loading_frame_url||pProp.item_id_loading))||
+              (pData.name&&pData.name.indexOf("加载")!==-1)
+            ){
+              cpHasLoading=true;
+            }
+
+            if(
+              Number(pData.part_id)===9||
+              (pSk&&(pSk.item_id||(pSk.properties&&pSk.properties.package_url)))||
+              (pProp&&pProp.package_url)||
+              (pData.name&&(pData.name.indexOf("主题")!==-1||pData.name.indexOf("皮肤")!==-1))
+            ){
+              cpHasSkin=true;
+              if(!skinId)skinId=String((pSk&&pSk.item_id)||pData.item_id||cid);
+            }
+          }
+        }catch(e){}
+
+        if(!cpHasLoading){
+          cpHasLoading=poolItems.some(function(it){
+            var rn=it.redeem_item_name||it.name||"";
+            return rn.indexOf("加载")!==-1;
+          });
+        }
+        if(!cpHasSkin){
+          cpHasSkin=poolItems.some(function(it){
+            var rn=it.redeem_item_name||it.name||"";
+            return rn.indexOf("主题")!==-1||rn.indexOf("皮肤")!==-1||rn.indexOf("套装")!==-1;
+          })||allCandidateIds.length>0;
+        }
+        if(!skinId){
+          skinId=allCandidateIds[0]||String(target.redeem_item_id||"").split("&")[0];
+        }
+
         suit={
-          item_id:String(target.redeem_item_id||"").split("&")[0],
-          ids:String(target.redeem_item_id||""),
+          item_id:skinId,
+          ids:allCandidateIds.join("&"),
           name:target.redeem_item_name||target.name||(matchedLottery?matchedLottery.lottery_name+"个性主题":"活动主题套装"),
-          cover:target.redeem_item_image||target.redeem_detail_image||"",
           splashes:splashes.length>0?splashes:null,
           spaces:spaces.length>0?spaces:null,
-          act_id:String(act)
+          act_id:String(act),
+          lottery_id:String(curLid),
+          hasSkin:cpHasSkin,
+          hasLoading:cpHasLoading
         };
       }
     }catch(err){}
@@ -413,34 +665,54 @@ async function handleInject(){
       toast("正在获取装扮详情…","");
       try{
         var r=await _f("https://api.bilibili.com/x/garb/v2/mall/suit/detail?item_id="+id).then(function(x){return x.json()});
-        if(!r||r.code!==0||!r.data){
-          r=await _f("https://api.bilibili.com/x/garb/v2/user/suit/benefit?item_id="+id+"&part=emoji_package").then(function(x){return x.json()});
+        if(!r||r.code!==0||!r.data||!r.data.suit_items){
+          r=await _f("https://api.bilibili.com/x/garb/v2/user/suit/benefit?item_id="+id+"&part=suit").then(function(x){return x.json()});
         }
         var dt=(r&&r.data)||{};
-        var si=dt.suit_items||{};var sk=Array.isArray(si.skin)?si.skin[0]:si.skin;
-        var realId=(sk&&sk.item_id)||dt.item_id||id;
-        var allIds=[dt.item_id,sk&&sk.item_id,id,si.space_bg&&si.space_bg[0]&&si.space_bg[0].item_id].filter(Boolean).join("&");
-        var spBg=Array.isArray(si.space_bg)?si.space_bg[0]:si.space_bg;
-        var spImages=[];
-        if(spBg&&spBg.properties){
-          for(var siIdx=1;siIdx<=12;siIdx++){
-            var port=spBg.properties["image"+siIdx+"_portrait"];
-            if(port&&spImages.indexOf(port)===-1)spImages.push(port);
-          }
-        }
-        var splashes=spImages.map(function(iu,idx){
-          return {url:iu,hash:"",size:0,name:(dt.name||"个性装扮")+" #"+(idx+1),isPortrait:true};
-        });
-        suit={
-          suit_id:String(dt.item_id||id),
-          item_id:String(realId),
-          ids:allIds||String(realId),
-          name:dt.name||(sk&&sk.name)||"个性装扮",
-          cover:(dt.properties&&dt.properties.image_cover)||(sk&&sk.properties&&sk.properties.image_cover)||"",
-          splashes:splashes.length>0?splashes:null
-        };
-        cur=suit;
+        suit=parseSuitDetail(dt,id);
+        if(suit)cur=suit;
       }catch(err){}
+    }
+    if(suit&&suit.item_id){
+      var targetId=Number(suit.item_id||id);
+      var comp=(typeof window!=="undefined"&&window.__BT_PARTS)?window.__BT_PARTS:null;
+      if(comp){
+        var sId=comp[0]||targetId;
+        var bId=comp[1]||0;
+        var lId=comp[2]||0;
+        var candIds=[String(sId)];
+        if(bId)candIds.push(String(bId));
+        if(lId)candIds.push(String(lId));
+        suit.ids=candIds.join("&");
+        suit.item_id=String(sId);
+        if(lId)suit.hasLoading=true;
+        if((!suit.spaces||!suit.splashes)&&bId){
+          try{
+            var bResp=await _f("https://api.bilibili.com/x/garb/v2/mall/suit/detail?item_id="+bId+"&part=suit").then(function(x){return x.json();});
+            var bProp=(bResp&&bResp.code===0&&bResp.data&&bResp.data.properties)||{};
+            var spImages=[];
+            var normalSpaces=[];
+            for(var pi=1;pi<=15;pi++){
+              var port=bProp["image"+pi+"_portrait"];
+              var land=bProp["image"+pi+"_landscape"];
+              if(pi<=12&&port&&spImages.indexOf(port)===-1)spImages.push(port);
+              if(land||port){
+                normalSpaces.push({
+                  landscape:land||port,
+                  name:(suit.name||"个性装扮")+" #"+pi,
+                  isDynamic:false
+                });
+              }
+            }
+            if(normalSpaces.length>0)suit.spaces=normalSpaces;
+            if(spImages.length>0){
+              suit.splashes=spImages.map(function(iu,idx){
+                return {url:iu,hash:"",size:0,name:(suit.name||"个性装扮")+" #"+(idx+1),isPortrait:true};
+              });
+            }
+          }catch(e){}
+        }
+      }
     }
   }else if(cur){
     suit=cur;
@@ -448,12 +720,12 @@ async function handleInject(){
   if(!suit||!suit.item_id){toast("未检测到可注入主题","");return}
   toast("正在注入装扮与预热缓存…","👕「"+suit.name+"」");
   try{
-    if(suit.cover){try{var _im=new Image();_im.src=suit.cover}catch(e){}}
     if(suit.splashes&&suit.splashes.length){suit.splashes.forEach(function(sp){if(sp&&sp.url){try{var _spIm=new Image();_spIm.src=sp.url}catch(e){}}})}
-    var selectParams={item_id:suit.item_id,ids:suit.ids,name:suit.name,cover:suit.cover||""};
+    var selectParams={item_id:suit.item_id,ids:suit.ids,name:suit.name};
     if(suit.splashes&&suit.splashes.length>0)selectParams.splashes=JSON.stringify(suit.splashes);
     if(suit.spaces&&suit.spaces.length>0)selectParams.spaces=JSON.stringify(suit.spaces);
     if(suit.act_id)selectParams.act_id=suit.act_id;
+    if(suit.lottery_id)selectParams.lottery_id=suit.lottery_id;
     var qs=new URLSearchParams(selectParams).toString();
     var sv=null;
     try{
@@ -479,7 +751,14 @@ async function handleInject(){
     }
     if(sv&&sv.saved){
       await new Promise(function(resolve){setTimeout(resolve,1000)});
-      toast("🎉 装扮注入成功","👕「"+(sv.name||suit.name)+"」"+(suit.splashes?" ("+suit.splashes.length+"张开屏立绘)":""),"🔄 重启哔哩哔哩后生效，部分装扮可能需要重启两次");
+      var extraTags=[];
+      if(suit.hasSkin!==false)extraTags.push("皮肤套装");
+      if(suit.hasLoading)extraTags.push("加载动画");
+      if(suit.splashes&&suit.splashes.length>0)extraTags.push(suit.splashes.length+"张开屏");
+      if(suit.spaces&&suit.spaces.length>0)extraTags.push(suit.spaces.length+"套头图");
+      var assetLine=extraTags.length>0?("📦 "+extraTags.join(" · ")):"";
+      var displayName=(sv&&sv.name&&sv.name!=="个性装扮")?sv.name:(suit.name||"个性装扮");
+      toast("🎉 装扮注入成功","👕「"+displayName+"」",assetLine,"🔄 重启哔哩哔哩后生效，部分装扮可能需要重启两次","⏳ 请等待本提示消失后重启哔哩哔哩");
     }else{
       toast((sv&&sv.error)||"注入失败","");
     }
@@ -565,12 +844,14 @@ document.addEventListener("touchend",handleCaptureEvent,true);
 })();
 </script>`;
 
-function injectDetailHtml(html) {
+function injectDetailHtml(html, comp) {
 	if (typeof html !== "string" || html.includes("bili-theme-inject-style")) return html;
+	const partsScript = `<script>window.__BT_PARTS = ${JSON.stringify(comp || null)};</script>\n`;
+	const snippet = partsScript + DETAIL_INJECT_SNIPPET;
 	if (html.includes("</body>")) {
-		return html.replace("</body>", DETAIL_INJECT_SNIPPET + "\n</body>");
+		return html.replace("</body>", snippet + "\n</body>");
 	}
-	return html + DETAIL_INJECT_SNIPPET;
+	return html + snippet;
 }
 
 /* **************** 注入: 皮肤 + 加载动画 **************** */
@@ -602,12 +883,16 @@ function buildUserEquip(skin) {
 }
 
 function buildLoadEquip(loading) {
-	if (!loading?.properties?.loading_url) return null;
-	return {
+	const p = loading?.properties || {};
+	const lUrl = p.loading_url || p.loading_frame_url;
+	if (!lUrl) return null;
+	const res = {
 		id: Number(loading.item_id || 0),
-		loading_url: loading.properties.loading_url,
-		ver: Number(loading.properties.ver || 0),
+		loading_url: lUrl,
+		ver: Number(p.ver || 0),
 	};
+	if (p.loading_frame_url) res.loading_frame_url = p.loading_frame_url;
+	return res;
 }
 
 /** 注入 skin/loading 到 /x/resource/show/skin 响应 */
@@ -651,6 +936,82 @@ function injectSpaceBg(data, suit, images) {
 	const results = targetImages.map((img, idx) => {
 		const isFallback = !!img.isFallback;
 		const itemIdStr = bgId ? `${bgId}-${idx}` : `space-${idx}`;
+		const isDynamic = Boolean(img.isDynamic || (Array.isArray(img.videoUrls) && img.videoUrls.length > 0));
+
+		if (isDynamic) {
+			const vUrls = img.videoUrls || [];
+			const backupImg = img.portrait || (img.landscape ? String(img.landscape).split("@")[0].split("?")[0] : "");
+			const croppedImg = img.landscape || backupImg;
+			const loc = img.location || "0-0-1079-1079";
+			const dur = Number(img.duration || 15);
+			const w = Number(img.width || 1242);
+			const h = Number(img.height || 1863);
+
+			return {
+				biz_type: 2,
+				biz_id: bgId,
+				item_id: itemIdStr,
+				item: {
+					item_type: 2,
+					item_id: itemIdStr,
+					image: null,
+					animation: {
+						is_silence: false,
+						animation_video_urls: vUrls,
+						animation_backup_image: croppedImg,
+						animation_first_frame: croppedImg,
+						width: w,
+						height: h,
+						duration: dur,
+						loop_mode: "",
+						trial_duration: 0,
+						show_subtitles: false,
+						subtitle_url: "",
+						show_progress_bar: false,
+						scaling_factor: 0,
+						location: loc,
+						compressed_w_h: "",
+					},
+					music_album: null,
+					extra: {
+						show_in_collection: false,
+						show_in_space: true,
+						unusable_reason: "",
+						space_expire_time: 0,
+					},
+					garb_extra: {
+						space_item_id: bgId,
+						space_item_index: idx,
+					},
+					card_extra: null,
+					additional_animation: {
+						is_silence: false,
+						animation_video_urls: vUrls,
+						animation_backup_image: backupImg + "@1080w_1618h",
+						animation_first_frame: backupImg + "@1080w_1618h",
+						width: 0,
+						height: 0,
+						duration: dur,
+						loop_mode: "",
+						trial_duration: 0,
+						show_subtitles: false,
+						subtitle_url: "",
+						show_progress_bar: false,
+						scaling_factor: 0,
+						location: loc,
+						compressed_w_h: "1079-1618",
+					},
+					cover: croppedImg,
+					item_sub_type: 0,
+					render_type: 0,
+				},
+				title: {
+					title: img.name || suit.name || "个性装扮",
+				},
+			};
+		}
+
+		// 静态图模式（兼容标准装扮 space_bg 与普通静态卡）
 		return {
 			biz_type: 1,
 			biz_id: bgId,
@@ -660,7 +1021,7 @@ function injectSpaceBg(data, suit, images) {
 				item_id: itemIdStr,
 				image: {
 					default_image: img.landscape, // 空间主页轮播展示: 方形/横向大图
-					long_image: img.portrait,
+					long_image: img.portrait || (img.landscape ? String(img.landscape).split("@")[0].split("?")[0] : ""),
 					shape_type: 1,
 					width: 1242,
 					height: isFallback ? 1073 : 1988,
@@ -675,7 +1036,7 @@ function injectSpaceBg(data, suit, images) {
 				},
 			},
 			title: {
-				title: suit.name || "个性装扮",
+				title: img.name || suit.name || "个性装扮",
 			},
 		};
 	});
@@ -755,14 +1116,55 @@ async function handleSpaceResponse(data, skinConfig, vmid, reqMid) {
 	// 仅改写自己的个人空间
 	if (vmid && reqMid && String(vmid) !== String(reqMid)) return data;
 
-	// 1. 优先使用显式保存的高清卡牌空间头图集合（针对抽卡盲盒/收藏集卡池，支持多套轮播，上限15张）
+	// 1. 优先使用专属存储 BiliThemeSpace 中的高清卡牌空间头图集合（上限15套）
 	let images = [];
-	if (Array.isArray(skinConfig.spaces) && skinConfig.spaces.length > 0) {
-		images = skinConfig.spaces.filter((x) => x && (x.landscape || x.portrait)).map((x) => ({
+	const spaceConfig = storeRead(STORAGE_SPACE);
+	const spaceList = spaceConfig?.spaces;
+	const actId = spaceConfig?.act_id;
+	const lotteryId = spaceConfig?.lottery_id;
+
+	if (Array.isArray(spaceList) && spaceList.length > 0) {
+		images = spaceList.filter((x) => x && (x.landscape || x.portrait)).map((x) => ({
 			landscape: x.landscape || x.portrait,
-			portrait: x.portrait || x.landscape,
+			portrait: x.portrait || (x.landscape ? String(x.landscape).split("@")[0].split("?")[0] : ""),
 			name: x.name || "卡牌头图",
+			isDynamic: !!x.isDynamic,
+			videoUrls: x.videoUrls || (Array.isArray(x.video_urls) ? x.video_urls : null),
+			location: x.location || "0-0-1079-1079",
+			duration: x.duration || 15,
+			width: x.width || 1242,
+			height: x.height || 1863,
 		})).slice(0, 15);
+
+		// 如果包含动态视频，检查是否有过期签名的风险；若接近过期或已过期且保存了 act_id + lottery_id，并发异步刷新最新链接
+		const firstVideo = images.find((x) => x.isDynamic && Array.isArray(x.videoUrls) && x.videoUrls[0])?.videoUrls?.[0];
+		if (firstVideo && actId && lotteryId) {
+			const m = firstVideo.match(/[?&]deadline=(\d+)/);
+			const nowSec = Math.floor(Date.now() / 1000);
+			if (m && Number(m[1]) < nowSec + 600) {
+				try {
+					const refreshUrl = `https://api.bilibili.com/x/vas/dlc_act/lottery_home_detail?act_id=${actId}&lottery_id=${lotteryId}`;
+					const rJson = await httpGet(refreshUrl);
+					const rItems = rJson?.data?.item_list || [];
+					const rMap = {};
+					for (const rit of rItems) {
+						const rci = rit?.card_info || rit?.card_item || {};
+						const rName = rci.card_name || rit.name;
+						const rV = rci.video_list || rit.video_list;
+						if (rName && Array.isArray(rV) && rV.length > 0) {
+							rMap[rName] = rV;
+						}
+					}
+					for (const img of images) {
+						if (img.name && rMap[img.name]) {
+							img.videoUrls = rMap[img.name];
+						}
+					}
+					spaceConfig.spaces = images;
+					storeWrite(STORAGE_SPACE, spaceConfig);
+				} catch {}
+			}
+		}
 	}
 
 	// 2. 次选：从标准装扮 space_bg 中提取官方配置的 landscape/portrait 轮播图片
@@ -774,8 +1176,10 @@ async function handleSpaceResponse(data, skinConfig, vmid, reqMid) {
 	}
 	if (!images || images.length === 0) return data;
 
+	const dynCount = images.filter((x) => x.isDynamic).length;
 	const res = injectSpaceBg(data, suit || { name: skinConfig.name, item_id: skinConfig.item_id }, images);
-	console.log(`[BiliTheme] 空间头图注入成功:「${suit?.name || skinConfig.name || "个性装扮"}」(${images.length}套头图, UID: ${vmid || reqMid || "当前用户"})`);
+	const modeDesc = dynCount > 0 ? `${dynCount}套动态视频头图, 共${images.length}套` : `${images.length}套静态头图`;
+	console.log(`[BiliTheme] 空间头图注入成功:「${suit?.name || skinConfig.name || "个性装扮"}」(${modeDesc}, UID: ${vmid || reqMid || "当前用户"})`);
 	return res;
 }
 
@@ -928,27 +1332,15 @@ function fetchImageMeta(url, timeoutMs = 3500) {
 	});
 }
 
-/** 批量获取素材真实元数据并走轻量持久化缓存 */
-async function fillImagesMeta(images) {
-	let cachedMeta = {};
-	try {
-		cachedMeta = storeRead("BiliThemeMeta") || {};
-		if (typeof cachedMeta !== "object" || Array.isArray(cachedMeta)) cachedMeta = {};
-	} catch {}
-
+/** 批量获取素材真实元数据并就地回写更新 BiliThemeSplash（自包含真实 hash 与 size，无需独立 Meta 键） */
+async function fillImagesMeta(images, splashConfig) {
 	let hasNew = false;
 	await Promise.all(images.map(async (img) => {
-		if (img.hash && img.size) return; // 素材已内置真实元数据（如典藏卡自带），直接使用
-		if (cachedMeta[img.url] && cachedMeta[img.url].hash) {
-			img.hash = cachedMeta[img.url].hash;
-			img.size = cachedMeta[img.url].size;
-			return;
-		}
+		if (img.hash && img.size) return; // 素材已内置真实元数据，直接使用
 		const meta = await fetchImageMeta(img.url);
 		if (meta && meta.hash) {
 			img.hash = meta.hash;
 			img.size = meta.size;
-			cachedMeta[img.url] = meta;
 			hasNew = true;
 		} else {
 			img.hash = "";
@@ -958,14 +1350,9 @@ async function fillImagesMeta(images) {
 
 	if (hasNew) {
 		try {
-			const keys = Object.keys(cachedMeta);
-			if (keys.length > 30) {
-				const trimMeta = {};
-				for (const k of keys.slice(-25)) trimMeta[k] = cachedMeta[k];
-				storeWrite("BiliThemeMeta", trimMeta);
-			} else {
-				storeWrite("BiliThemeMeta", cachedMeta);
-			}
+			const cfg = (splashConfig && typeof splashConfig === "object") ? splashConfig : {};
+			cfg.splashes = images;
+			storeWrite(STORAGE_SPLASH, cfg);
 		} catch {}
 	}
 }
@@ -989,10 +1376,12 @@ async function injectSplashResponse(data, skinConfig, reqUrl) {
 		}
 	} catch {}
 
-	// 1. 优先提取显式保存的数字卡牌典藏全屏开屏
+	// 1. 优先提取专属存储 BiliThemeSplash 中的数字卡牌典藏全屏开屏
 	let images = [];
-	if (Array.isArray(skinConfig.splashes) && skinConfig.splashes.length > 0) {
-		images = skinConfig.splashes.filter((x) => x && x.url).map((x) => ({
+	const splashConfig = storeRead(STORAGE_SPLASH);
+	const splashList = splashConfig?.splashes;
+	if (Array.isArray(splashList) && splashList.length > 0) {
+		images = splashList.filter((x) => x && x.url).map((x) => ({
 			url: x.url,
 			hash: x.hash || "",
 			size: x.size || 0,
@@ -1017,8 +1406,8 @@ async function injectSplashResponse(data, skinConfig, reqUrl) {
 		return data;
 	}
 
-	// 并发获取各素材真实的 Etag (MD5) 与精确字节大小（带持久化缓存，已有元数据跳过探测）
-	await fillImagesMeta(images);
+	// 并发获取各素材真实的 Etag (MD5) 与精确字节大小，若有新数据就地回写更新 BiliThemeSplash（自包含真实元数据）
+	await fillImagesMeta(images, splashConfig);
 
 	// 真实接口在未购买自选开屏时返回 code: -400，强制设为 0 与 message: "0"，确保客户端正常入库
 	if (data.code !== 0) {
@@ -1150,6 +1539,168 @@ async function injectSplashResponse(data, skinConfig, reqUrl) {
 	return data;
 }
 
+
+/**
+ * 获取下架装扮注入开关判定 (多端多态传参深度适配):
+ * 默认值: true（五端默认开启）
+ *   - Loon 原生对象: $argument.offShelf === false 时关闭，默认开启
+ *   - 数组形式: argument=[{spaceBg}, {splashBg}, {offShelf}] -> 第3项
+ *   - Surge 键值对字符串: argument="offShelf={{{offShelf}}}" -> "offShelf=true"
+ *   - Quantumult X: 由于 QX 不支持 argument 传参，默认直接视为开启
+ */
+function isOffShelfEnabled() {
+	if ($app === "Quantumult X") return true;
+	if (typeof $argument === "boolean") return $argument;
+	if (typeof $argument === "number") return $argument === 1;
+
+	// 数组形式（Loon: argument=[{spaceBg}, {splashBg}, {offShelf}]）
+	if (Array.isArray($argument)) {
+		const v = $argument[2] ?? (Array.isArray($argument[0]) ? $argument[0][2] : undefined);
+		if (typeof v === "boolean") return v;
+		if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+		if (typeof v === "number") return v === 1;
+	}
+
+	// Loon 原生对象（$argument.offShelf / $argument.enableOffShelf）
+	if ($argument && typeof $argument === "object") {
+		const v = $argument.offShelf ?? $argument.enableOffShelf ?? $argument.discontinued;
+		if (typeof v === "boolean") return v;
+		if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+		if (typeof v === "number") return v === 1;
+	}
+
+	// 字符串形式（Surge / Stash 模块参数 / JSON / 裸布尔字符串）
+	if (typeof $argument === "string" && $argument.trim()) {
+		const str = $argument.trim().toLowerCase();
+		if (str === "true" || str === "1") return true;
+		if (str === "false" || str === "0") return false;
+		if (str.includes("{{{offshelf}}}") || str.includes("{{offshelf}}")) return true; // 未替换模板默认 true
+		try {
+			const obj = JSON.parse(str);
+			if (Array.isArray(obj)) {
+				const raw = obj[2] ?? obj[0];
+				const v = (raw && typeof raw === "object") ? (raw.offShelf ?? raw.enableOffShelf) : raw;
+				if (typeof v === "boolean") return v;
+				if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+				if (typeof v === "number") return v === 1;
+			} else if (obj && typeof obj === "object") {
+				const v = obj.offShelf ?? obj.enableOffShelf;
+				if (typeof v === "boolean") return v;
+				if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+				if (typeof v === "number") return v === 1;
+			}
+		} catch {}
+		const m = str.match(/(?:^|[,;&])(?:offshelf|enableoffshelf|discontinued)\s*=\s*(true|false|1|0)/);
+		if (m) return m[1] === "true" || m[1] === "1";
+	}
+	return true; // 五端默认开启
+}
+
+/**
+ * 官方装扮商城搜索拦截与下架装扮补齐:
+ * 接口: https://api.bilibili.com/x/garb/vas/search?key_word=...
+ * 
+ * 机制:
+ * 1. 毫秒级检索本地 $persistentStore["BiliThemeOffShelf"] 缓存库；
+ * 2. 差集去重（仅对官方原生搜索结果中不存在的下架装扮进行增量补齐）；
+ * 3. 严格匹配五元组: [id, name, cover, type, lottery_id]；
+ * 4. 自动后台异步检查版本更新（7 天静默周期比对）。
+ */
+async function handleOffShelfSearch(data, kw, u) {
+	if (!data || !data.data) return data;
+	if (!Array.isArray(data.data.list)) data.data.list = [];
+
+	let db = storeRead(STORAGE_OFFSHELF);
+
+	// 若本地无缓存，尝试通过远程 Worker 异步/同步初始化一次
+	if (!db || !Array.isArray(db.items) || db.items.length === 0) {
+		try {
+			const remote = await httpGet(DATABASE_URL, 3500);
+			if (remote && Array.isArray(remote.items) && remote.items.length > 0) {
+				db = remote;
+				db.lastCheck = Date.now();
+				storeWrite(STORAGE_OFFSHELF, db);
+			}
+		} catch (e) {}
+	} else {
+		// 7 天静默版本自动缓慢更新
+		const now = Date.now();
+		const lastCheck = Number(db.lastCheck || 0);
+		if (!lastCheck || (now - lastCheck > 7 * 86400 * 1000)) {
+			db.lastCheck = now;
+			storeWrite(STORAGE_OFFSHELF, db);
+			httpGet(DATABASE_URL, 4000).then((newDb) => {
+				if (newDb && Number(newDb.version) > Number(db.version || 0) && Array.isArray(newDb.items)) {
+					newDb.lastCheck = now;
+					storeWrite(STORAGE_OFFSHELF, newDb);
+					console.log(`[BiliTheme] 下架装扮库已自动增量更新至 v${newDb.version} (共 ${newDb.total} 套)`);
+				}
+			}).catch(() => {});
+		}
+	}
+
+	if (!db || !Array.isArray(db.items) || db.items.length === 0) {
+		return data;
+	}
+
+	const kwLower = kw.toLowerCase();
+	const list = data.data.list || [];
+	const existingIds = new Set(list.map((x) => Number(x?.item_id)).filter(Boolean));
+	const existingNames = new Set(list.map((x) => String(x?.name || "").trim().toLowerCase()).filter(Boolean));
+	const matched = [];
+
+	for (const item of db.items) {
+		// 五元组: [id, name, cover, type, lottery_id]
+		const id = Number(item[0]);
+		const name = String(item[1] || "").trim();
+		const nameLower = name.toLowerCase();
+		const cover = item[2] || "";
+		const type = Number(item[3]);
+		const lotId = Number(item[4] || 0);
+
+		if (!id || !name) continue;
+		if (existingIds.has(id)) continue; // 官方搜索已包含ID，绝不重复追加
+		if (existingNames.has(nameLower)) continue; // 已包含同名装扮，绝不重复展示
+
+		if (nameLower.includes(kwLower)) {
+			existingIds.add(id);
+			existingNames.add(nameLower);
+			const isDlc = type === 4;
+			const jumpUrl = isDlc
+				? `https://www.bilibili.com/h5/mall/digital-card/home?-Abrowser=live&act_id=${id}&f_source=shop&from=search&hybrid_set_header=2&lottery_id=${lotId}&navhide=1`
+				: `https://www.bilibili.com/h5/mall/suit/detail?f_source=shop&from=search&id=${id}&navhide=1`;
+
+			matched.push({
+				goods_type: type,
+				item_id: id,
+				sub_item_id: isDlc ? lotId : (id * 1000 + 1),
+				cover: cover,
+				name: name,
+				price: 0,
+				sale_count_desc: "下架装扮",
+				discount: null,
+				button_type: "support_now",
+				button_url: jumpUrl,
+				sale_start: 0,
+				jump_url: jumpUrl,
+				show_start: 0,
+				tracking_info: JSON.stringify({ item_id: id, extra_id: String(lotId || ""), index_ori: 0, index_cur: 0, biz_id: type, ver: "search" }),
+				dynamic_tag: { text: "下架装扮", bg_color: "#FF334B", bg_img: "", text_color: "#FFFFFF" },
+				ui_content: null,
+			});
+		}
+	}
+
+	if (matched.length > 0) {
+		data.data.list = list.concat(matched);
+		data.data.total = (data.data.total || 0) + matched.length;
+		modified = true;
+		console.log(`[BiliTheme] 搜索 "${kw}" 命中并补齐 ${matched.length} 套下架绝版装扮`);
+	}
+
+	return data;
+}
+
 /* **************** 主调度 **************** */
 (async () => {
 	const urlStr = $request.url;
@@ -1157,13 +1708,48 @@ async function injectSplashResponse(data, skinConfig, reqUrl) {
 	const path = u.pathname;
 	const settings = getSettings();
 
+	/* 0. 官方装扮商城搜索下架装扮补齐 */
+	if (u.hostname === "api.bilibili.com" && path.includes("/x/garb/vas/search")) {
+		if (!isOffShelfEnabled()) {
+			$done({});
+			return;
+		}
+		const kw = u.searchParams.get("key_word") || "";
+		if (!kw.trim()) {
+			$done({});
+			return;
+		}
+		let rawBody = $response.body;
+		if (!rawBody || typeof rawBody !== "string") { $done({}); return; }
+		let data;
+		try { data = JSON.parse(rawBody); } catch { $done({}); return; }
+		if (data && data.code === 0 && data.data) {
+			const mod = await handleOffShelfSearch(data, kw.trim(), u);
+			if (modified) {
+				const body = JSON.stringify(mod);
+				const headers = $response.headers || {};
+				headers["content-type"] = "application/json; charset=utf-8";
+				delete headers["content-length"];
+				delete headers["Content-Length"];
+				delete headers["content-encoding"];
+				delete headers["Content-Encoding"];
+				doneResponse({ status: $response.status || 200, headers, body });
+				return;
+			}
+		}
+		$done({});
+		return;
+	}
+
 	/* 1. 官方装扮商城详情页 HTML 注入（衣服图标接管 + 三行 Toast） */
 	if (u.hostname === "www.bilibili.com" && (path.includes("/h5/mall/digital-card/home") || path.includes("/h5/mall/suit/detail"))) {
 		const raw = typeof $response.body === "string" ? $response.body : "";
 		if (raw) {
-			const mod = injectDetailHtml(raw);
+			const suitId = u.searchParams.get("id");
+			const comp = await getArchiveComponents(suitId);
+			const mod = injectDetailHtml(raw, comp);
 			if (mod !== raw) {
-				console.log("[BiliTheme] 商城详情页接管成功: 衣服图标覆盖层与注入钩子已就绪");
+				console.log("[BiliTheme] 商城详情页接管成功: 衣服图标覆盖层与注入钩子已就绪" + (comp ? ` (已挂载分片资产: ${comp.filter(Boolean).join("&")})` : ""));
 				const headers = $response.headers || {};
 				headers["content-type"] = "text/html; charset=utf-8";
 				delete headers["content-length"];
