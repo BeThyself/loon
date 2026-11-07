@@ -1,19 +1,20 @@
 #!name = 哔哩主题
 #!author = thyself
-#!desc = 进入哔哩哔哩官方装扮商城或盲盒活动卡池，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。
+#!desc = 进入哔哩哔哩官方装扮商城详情页，点击顶栏右上角衣服图标即可一键注入主题皮肤、加载动画、开屏画面与空间头图，重启哔哩哔哩生效。\n开屏画面装扮注入需在APP「设置-开屏画面设置」中任意勾选12张并保存开启自选模式（仅需操作一次），后续装扮开屏即可全自动生效与随机轮播。部分情况下开屏画面注入不生效，去设置开屏画面重新选12张即可。
 #!icon = https://raw.githubusercontent.com/luestr/IconResource/main/App_icon/120px/Bilibili.png
 #!tag = 功能增强
-#!date = 2026-10-16
+#!date = 2026-11-07
 
 [Argument]
 spaceBg = switch, true, tag=个人空间头图注入, desc=开启后将装扮头图注入到个人空间主页，关闭则保留原本空间头图。
-splashBg = switch, true, tag=开屏画面装扮注入, desc=开启后将装扮立绘注入到开屏画面。注意：需在APP「设置-开屏画面设置」中任意勾选12张并保存开启自选模式（仅需操作一次），后续装扮开屏即可全自动生效与随机轮播。部分情况下开屏画面注入不生效，去设置开屏画面重新选12张即可。
+splashBg = switch, true, tag=开屏画面装扮注入, desc=开屏画面装扮注入需在APP「设置-开屏画面设置」中任意勾选12张并保存开启自选模式（仅需操作一次），后续装扮开屏即可全自动生效与随机轮播。部分情况下开屏画面注入不生效，去设置开屏画面重新选12张即可。
+offShelf = switch, true, tag=获取下架装扮, desc=开启后在装扮商城搜索时，自动整合并展示下架绝版装扮。注：部分下架装扮详情页初始未见注入图标时，请轻轻向下滚动页面，即可在右上角显示图标并进行注入。
 
 [Script]
-# 详情页注入按钮 + 皮肤/加载动画/开屏画面/空间头图（响应改写）
-http-response ^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list))(\/|\?|$) requires-body=1, argument=[{spaceBg}, {splashBg}], script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.response, timeout=10
+# 详情页注入按钮 + 皮肤/加载动画/开屏画面/空间头图/搜索补齐（响应改写）
+http-response ^https?:\/\/(www\.bilibili\.com\/h5\/mall\/(digital-card\/home|suit\/detail)|app\.bilibili\.com\/x\/(resource\/show\/skin|v2\/space|v2\/splash\/brand\/list)|api\.bilibili\.com\/x\/garb\/vas\/search)(\/|\?|$) requires-body=1, argument=[{spaceBg}, {splashBg}, {offShelf}], script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.response.js, tag=BiliTheme.response, timeout=10
 # 主题配置持久化 API
 http-request ^https?:\/\/app\.bilibili\.com\/settings\/theme(\/|\?|$) requires-body=1, script-path=https://raw.githubusercontent.com/BeThyself/loon/main/bili-theme/bili-theme.api.js, tag=BiliTheme.api, timeout=15
 
 [MitM]
-hostname = app.bilibili.com, www.bilibili.com
+hostname = app.bilibili.com, www.bilibili.com, api.bilibili.com
