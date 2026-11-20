@@ -1,0 +1,19 @@
+#!name=小黑盒签到
+#!desc=打开小黑盒 APP 进「我的 → 签到」页停留 1 秒抓 Cookie，之后每天 08:20 自动签到领 20 H 币。
+#!author=thyself
+#!homepage=https://github.com/BeThyself/loon/tree/main/heybox
+#!icon=https://raw.githubusercontent.com/MaYIHEI/pin/refs/heads/main/app/heybox.png
+#!loon_version=3.5.1(983)
+#!tag=签到
+
+# 脚本来源：MaYIHEI/paperclip app/heybox（本仓库镜像，逻辑未改动）
+# 抓 Cookie：命中 api.xiaoheihe.cn 的 sign_list 请求，从 Cookie 头取 pkey / x_xhh_tokenid
+# 签到：cron 每天 08:20 运行，读取本地保存的 Cookie 与公共参数
+# 上游更新后需手动同步 heybox.js，见 README
+
+[Script]
+request if ${url} ~= /^https:\/\/api\.xiaoheihe\.cn\/task\/sign_list/i then script("https://raw.githubusercontent.com/BeThyself/loon/main/heybox/heybox.js") with tag="小黑盒 Cookie", img_url="https://raw.githubusercontent.com/MaYIHEI/pin/refs/heads/main/app/heybox.png"
+cron "20 8 * * *" then script("https://raw.githubusercontent.com/BeThyself/loon/main/heybox/heybox.js") with tag="小黑盒签到", img_url="https://raw.githubusercontent.com/MaYIHEI/pin/refs/heads/main/app/heybox.png", timeout=60
+
+[MITM]
+hostname = api.xiaoheihe.cn
