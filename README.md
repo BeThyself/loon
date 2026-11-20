@@ -16,6 +16,9 @@
 | `weibo/README.md` | 转换对照、设置页入口与注意事项 |
 | `mppmfy/MaipianVIP.plugin` | 麦片屏幕翻译会员解锁（QX 脚本转 Loon），脚本由本仓库托管 |
 | `mppmfy/README.md` | 改写逻辑、已知限制与来源 |
+| `heybox/heybox-checkin.lpx` | 小黑盒每日签到（抓 Cookie + 每天 08:20 签到），脚本由本仓库托管 |
+| `heybox/heybox.js` | 签到脚本镜像（上游 MaYIHEI/paperclip，逻辑未改） |
+| `heybox/README.md` | 安装步骤、通知清单与注意事项 |
 
 ## 安装（Loon）
 
