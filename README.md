@@ -19,6 +19,9 @@
 | `heybox/heybox-checkin.lpx` | 小黑盒每日签到（抓 Cookie + 每天 08:20 签到），脚本由本仓库托管 |
 | `heybox/heybox.js` | 签到脚本镜像（上游 MaYIHEI/paperclip，逻辑未改） |
 | `heybox/README.md` | 安装步骤、通知清单与注意事项 |
+| `anyrouter/anyrouter-checkin.lpx` | AnyRouter 每日签到（自动解阿里云 WAF 挑战 + 余额通知），脚本由本仓库托管 |
+| `anyrouter/anyrouter.js` | 签到脚本（沙盒 eval 解挑战，凭证首次访问网页自动抓取） |
+| `anyrouter/README.md` | 安装步骤、抓凭证与失败排查 |
 
 ## 安装（Loon）
 
@@ -32,3 +35,5 @@
 `bili-theme` v4.1.0，来自 [chaoscard/bili-theme](https://github.com/chaoscard/bili-theme)。
 本仓库为镜像：脚本内容逐字节一致，仅 `script-path` 改指本仓库。
 业务逻辑版权归原作者。
+
+`anyrouter` 的 WAF 挑战思路参考了社区脚本 [823302271/custom-clash](https://github.com/823302271/custom-clash) 与 [wujunjr/anyrouter-checkin](https://github.com/wujunjr/anyrouter-checkin)，固定混淆表已失效，本仓库版本改为沙盒 eval 现算。
