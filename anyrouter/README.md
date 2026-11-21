@@ -8,6 +8,14 @@ anyrouter.top 挂在阿里云 WAF 后面。裸 HTTP 请求只会拿到一段混�
 
 本脚本不再硬编码算法：把挑战页里的 `<script>` 丢进沙盒 `eval`，用 `document.cookie` 的 setter 拦截它自己算出的 `acw_sc__v2`，所以上游改表也不影响（除非换成另一种挑战）。
 
+## 三种入口
+
+| 入口 | 用途 |
+|---|---|
+| `AnyRouter 抓取凭证` | 自动，打开 anyrouter.top 时抓 session |
+| `AnyRouter 每日签到` | cron，默认 08:35 |
+| `AnyRouter 手动签到` | 脚本列表里手点，立刻看结果（不依赖 MITM） |
+
 ## 安装
 
 1. Loon → 配置 → 插件 → 添加：
