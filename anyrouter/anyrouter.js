@@ -262,13 +262,34 @@ function summary(ck, uid, title, msg) {
 
 /* ---------------- 入口 ---------------- */
 
+function sessionPart(ck) {
+  var m = String(ck || "").match(/(?:^|;\s*)session=([^;]*)/);
+  return m ? m[1] : "";
+}
+
 if (typeof $request !== "undefined" && $request) {
   // 抓凭证：浏览器/App 访问 anyrouter.top 时顺手存下 Cookie 与 New-Api-User
   var h = $request.headers || {};
   var ck = hget(h, "Cookie");
   var uid = hget(h, "New-Api-User");
-  if (ck && ck.indexOf("session=") >= 0) $persistentStore.write(ck, K_CK);
-  if (uid) $persistentStore.write(uid, K_UID);
+  var oldCk = $persistentStore.read(K_CK) || "";
+  var oldUid = $persistentStore.read(K_UID) || "";
+  var changed = false;
+
+  if (ck && sessionPart(ck)) {
+    // WAF cookie 会频繁变，只有 session 变了才算新凭证
+    if (sessionPart(ck) !== sessionPart(oldCk)) {
+      $persistentStore.write(ck, K_CK);
+      changed = true;
+    }
+  }
+  if (uid && uid !== oldUid) {
+    $persistentStore.write(uid, K_UID);
+    changed = true;
+  }
+  if (changed) {
+    notify("✅ 已抓取凭证", uid ? "用户 " + uid : "", "之后按 cron 自动签到，可先手动点一次");
+  }
   $done({});
 } else {
   run();
