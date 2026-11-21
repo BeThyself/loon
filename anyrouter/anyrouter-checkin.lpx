@@ -1,20 +1,21 @@
-#!name = AnyRouter 每日签到
-#!desc = 自动签到 anyrouter.top，自动破解阿里云 WAF 挑战；凭证首次打开网页自动抓取，也可手动填写 session
-#!author = thyself
-#!system = iOS,iPadOS,macOS
-#!loon_version = 3.5.1(983)
-#!date = 2026-11-21
-#!tag = 签到,工具
-#!type = normal
+#!name=AnyRouter 每日签到
+#!desc=自动签到 anyrouter.top（自动破解阿里云 WAF 挑战）。首次在手机浏览器登录一次即可抓取凭证，也可手动填 session。
+#!author=thyself
+#!system=iOS,iPadOS
+#!loon_version=3.5.1(988)
+#!date=2026-11-21
+#!tag=签到,工具
 
 [Argument]
-session = input,,type=string,tag=Session,desc=留空则自动抓取浏览器 Cookie；也可手动填 session 值或完整 Cookie
-new_api_user = input,,type=string,tag=用户ID,desc=New-Api-User 头的值，可留空，脚本会从 /api/user/self 自动取
-cronExpression = input,"35 8 * * *",type=string,tag=执行时间,desc=默认每天 08:35
+session = input,"",tag=Session,desc=留空自动抓取；也可填 session 值或整条 Cookie
+new_api_user = input,"",tag=用户 ID,desc=New-Api-User 头的值，可留空
+action = select,"checkin","login","clear",tag=运行模式,desc=checkin 签到；clear 清除本机凭据
+cronExpression = input,"35 8 * * *",tag=执行时间,desc=默认每天 08:35
 
 [Script]
-request if ${url} ~= /^https:\/\/anyrouter\.top\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/anyrouter/anyrouter.js") with tag="AnyRouter抓凭证", timeout=15
-cron ${cronExpression} then script("https://raw.githubusercontent.com/BeThyself/loon/main/anyrouter/anyrouter.js") with tag="AnyRouter签到", timeout=90
+request if ${url} ~= /^https:\/\/anyrouter\.top\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/anyrouter/anyrouter.js", {${session}, ${new_api_user}, ${action}}) with tag="AnyRouter 抓取凭证", timeout=10, requires_body=false
+cron "35 8 * * *" then script("https://raw.githubusercontent.com/BeThyself/loon/main/anyrouter/anyrouter.js", {${session}, ${new_api_user}, ${action}}) with tag="AnyRouter 每日签到", timeout=120
+generic then script("https://raw.githubusercontent.com/BeThyself/loon/main/anyrouter/anyrouter.js", {${session}, ${new_api_user}, ${action}}) with img_url="checkmark.seal.system", tag="AnyRouter 手动签到", timeout=120
 
-[Mitm]
+[MITM]
 hostname = anyrouter.top
