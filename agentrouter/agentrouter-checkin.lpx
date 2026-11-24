@@ -1,0 +1,23 @@
+#!name=AgentRouter 每日签到
+#!desc=AgentRouter 自动签到：密码模式走不通时（被阿里云验证码拦）可切 Cookie 模式；首次在浏览器打开 agentrouter.org 自动抓取 Cookie
+#!author=thyself
+#!system=iOS,iPadOS
+#!loon_version=3.5.1(988)
+#!date=2026-11-24
+#!tag=签到,工具
+
+[Argument]
+cookie = input,"",tag=Cookie,desc=浏览器登录后的 Cookie（含 session=）；留空则用账号密码模式
+uid = input,"",tag=用户 ID,desc=New-Api-User 的值，可留空自动获取
+prefer_cookie = switch,false,tag=优先 Cookie 模式,desc=开启后只用 Cookie，不再尝试密码登录
+base_url = input,"https://agentrouter.org",tag=站点地址
+verify_log = switch,true,tag=核验签到日志,desc=登录后查询当天签到日志确认结果
+policy = input,"",tag=策略/节点,desc=可选，填 Loon 策略组名；留空按分流规则
+
+[Script]
+request if ${url} ~= /^https:\/\/agentrouter\.org\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/agentrouter/agentrouter_checkin.js", {${cookie}, ${uid}, ${prefer_cookie}, ${base_url}, ${verify_log}, ${policy}}) with tag="AgentRouter 抓取凭证", timeout=10, requires_body=false
+cron "0 9 * * *" then script("https://raw.githubusercontent.com/BeThyself/loon/main/agentrouter/agentrouter_checkin.js", {${cookie}, ${uid}, ${prefer_cookie}, ${base_url}, ${verify_log}, ${policy}}) with tag="AgentRouter 每日签到", timeout=120
+generic then script("https://raw.githubusercontent.com/BeThyself/loon/main/agentrouter/agentrouter_checkin.js", {${cookie}, ${uid}, ${prefer_cookie}, ${base_url}, ${verify_log}, ${policy}}) with img_url="checkmark.seal.system", tag="AgentRouter 手动签到", timeout=120
+
+[MITM]
+hostname = agentrouter.org
