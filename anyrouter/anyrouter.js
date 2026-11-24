@@ -1,6 +1,12 @@
 /*
  * AnyRouter (anyrouter.top) 每日签到 · Loon
  *
+ * v4
+ *  - 抓凭证只在「真的登录了」时发生：session 像真会话 + New-Api-User 是数字 uid，
+ *    两个都在才算；没登录时站点下发的游客 session 一律忽略
+ *  - 去重：session/uid 都没变就什么都不做；变了先静默存，通知另有节流
+ *  - 通知节流：换账号必报、首次抓取必报，同账号 12 小时内最多一条
+ *
  * v3
  *  - 每个 API 请求都做「遇到挑战页就地解、解完重试」，不再依赖先预热 /api/status
  *  - $httpClient 显式关掉 auto-cookie，避免 Loon 自带 cookie 罐污染
@@ -16,6 +22,8 @@ var BASE = "https://anyrouter.top";
 var K_CK = "anyrouter_cookie";
 var K_UID = "anyrouter_uid";
 var K_TS = "anyrouter_captured_at";
+var K_NOTIFIED = "anyrouter_notified_at";
+var NOTIFY_GAP = 12 * 3600 * 1000;   // 同一账号 12 小时内最多提醒一次
 var ACW = "acw_sc__v2";
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 var QUOTA_UNIT = 500000;
@@ -277,24 +285,43 @@ function report(ck, uid, title, msg) {
 if (typeof $request !== "undefined" && $request) {
   var h = $request.headers || {};
   var hitCk = hget(h, "Cookie");
-  var hitUid = hget(h, "New-Api-User");
-  var oldCk = $persistentStore.read(K_CK) || "";
-  var oldUid = $persistentStore.read(K_UID) || "";
-  var changed = false;
+  var hitUid = String(hget(h, "New-Api-User") || "");
+  var sess = sessionPart(hitCk);
 
-  if (hitCk && sessionPart(hitCk) && sessionPart(hitCk) !== sessionPart(oldCk)) {
-    write(K_CK, hitCk);
-    changed = true;
-    var d = new Date();
-    write(K_TS, d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2) + " " +
-      ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2));
+  // 只认「登录后才会同时出现」的两样东西：像个真会话的 session + 数字 uid。
+  // 没登录时浏览站点也会下发游客 session，那种一律不抓、不存、不通知。
+  if (!sess || sess.length < 16 || !/^\d+$/.test(hitUid)) return $done({});
+
+  var oldCk = $persistentStore.read(K_CK) || "";
+  var oldUid = String($persistentStore.read(K_UID) || "");
+  var oldSess = sessionPart(oldCk);
+
+  // 登录态没变（session 与 uid 都一样）→ 什么都不做，绝不重复提醒
+  if (sess === oldSess && hitUid === oldUid) return $done({});
+
+  write(K_CK, hitCk);
+  if (hitUid !== oldUid) write(K_UID, hitUid);
+  var d = new Date();
+  write(K_TS, d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2) + " " +
+    ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2));
+
+  // 通知节流：换账号必报、首次抓取必报，其余情况下 12 小时内只静默同步
+  var now = d.getTime();
+  var last = Number($persistentStore.read(K_NOTIFIED) || 0) || 0;
+  var acctSwitch = !!oldUid && hitUid !== oldUid;
+  var due = !last || now - last > NOTIFY_GAP;
+
+  if (acctSwitch) {
+    notify("🔄 已切换账号", "用户 " + hitUid, "凭证已更新，之后按 cron 自动签到");
+    write(K_NOTIFIED, String(now));
+  } else if (!oldSess) {
+    notify("✅ 已抓取凭证", "用户 " + hitUid, "之后按 cron 自动签到；也可在脚本列表手动跑一次");
+    write(K_NOTIFIED, String(now));
+  } else if (due) {
+    notify("✅ 凭证已更新", "用户 " + hitUid, "登录态变了，已静默同步新 Cookie");
+    write(K_NOTIFIED, String(now));
   }
-  if (hitUid && hitUid !== oldUid) {
-    write(K_UID, hitUid);
-    changed = true;
-  }
-  if (changed) notify("✅ 已抓取凭证", hitUid ? "用户 " + hitUid : "", "之后按 cron 自动签到；也可在脚本列表手动跑一次");
-  $done({});
+  return $done({});
 } else {
   run();
 }
