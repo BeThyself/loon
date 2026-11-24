@@ -22,6 +22,9 @@
 | `anyrouter/anyrouter-checkin.lpx` | AnyRouter 每日签到（自动解阿里云 WAF 挑战 + 余额通知），脚本由本仓库托管 |
 | `anyrouter/anyrouter.js` | 签到脚本（沙盒 eval 解挑战，凭证首次访问网页自动抓取） |
 | `anyrouter/README.md` | 安装步骤、抓凭证与失败排查 |
+| `agentrouter/agentrouter-checkin.lpx` | AgentRouter 每日签到（Cookie 模式绕过阿里云验证码），插件版 |
+| `agentrouter/agentrouter_checkin.js` | 签到脚本（Cookie / 密码双模式，WAF 判读） |
+| `agentrouter/README.md` | 报错原因、两种模式与参数说明 |
 
 ## 安装（Loon）
 
