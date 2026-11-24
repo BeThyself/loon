@@ -2,6 +2,8 @@
 
 基于 [ddgksf2013/agentrouter_checkin.js](https://github.com/ddgksf2013/Scripts) 改造，新增 **Cookie 模式**与 WAF 判读。
 
+> **现状（2026-11-24）**：手机出口 IP 被阿里云 WAF 判风险、页面过滑块后仍白屏，本机已改由自建服务器定时跑（每天 09:07 Asia/Shanghai，独立 Python 版，与本站点同一套逻辑）。这个 Loon 插件保留作备用，装它之前先确认不会被和服务器那份重复签到。
+
 ## 为什么会报「登录接口返回 HTML（HTTP 200）」
 
 2026-11-24 起，agentrouter.org 全站（含 `/api/status`、`/api/user/login`）都挂到了阿里云 WAF 的**交互式验证码**后面：
