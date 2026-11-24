@@ -29,6 +29,15 @@
 | `❌ 服务器拒绝` | hook/token 不对，或 Cookie 里没有 session |
 | `❌ 未配置` | 插件参数没填 |
 
+## 去重（v4）
+
+登录态没变就**完全不发请求、不发通知**：
+
+- 客户端按 `session` 值判定（**不看**每次刷新都会变的 `Authorization: Bearer`），session 一样就什么都不做；
+- 服务端再把收到的 Cookie / Bearer 归一化后与已存配置比对，一致则直接返回 `{"ok":true,"skipped":true}`，**不跑签到、不回日志、Loon 静默**。
+
+所以同一个登录态反复访问网站不会刷屏；只有真的重新登录（session 变了）才会投递一次。
+
 ## 安全
 
 - 服务器端只接受 `POST /<暗号>/cookie`，且要 `X-Token` 匹配；只写 Cookie 与 uid 两个字段，不返回任何已有配置。
