@@ -1,0 +1,17 @@
+#!name=RunAnyTime 抓 Cookie
+#!desc=在手机浏览器登录 runanytime.hxi.me 后，自动把 Cookie 投递到你的服务器，服务器立刻试跑签到并回推结果
+#!author=thyself
+#!system=iOS,iPadOS
+#!loon_version=3.5.1(988)
+#!date=2026-11-24
+#!tag=签到,工具
+
+[Argument]
+hook = input,"",tag=投递地址,desc=形如 https://ra.xxx.nip.io/<暗号>/cookie，由我提供
+token = input,"",tag=令牌,desc=X-Token 的值，由我提供
+
+[Script]
+request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/runanytime/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓 Cookie", timeout=70, requires_body=false
+
+[MITM]
+hostname = runanytime.hxi.me
