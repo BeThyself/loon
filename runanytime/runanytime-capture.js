@@ -24,7 +24,7 @@ function argOf(name) {
 
 var EP = argOf("hook");
 var TOKEN = argOf("token");
-var VERSION = "v2";
+var VERSION = "v3";
 var K_LAST = "runanytime_last_session";
 var K_UID = "runanytime_uid";
 
@@ -49,50 +49,67 @@ function notify(title, body) {
 if (typeof $request !== "undefined" && $request) {
   var headers = $request.headers || {};
   if (!EP || !TOKEN) {
-    notify("❌ 未配置", "请在插件参数里填 hook 与 token");
+    notify("❌ 未配置", "插件参数 hook / token 为空");
     $done({});
   } else {
-  var ck = hget(headers, "Cookie");
-  var uid = hget(headers, "New-Api-User");
-  var ses = sessionOf(ck);
+    var ck = hget(headers, "Cookie");
+    var auth = hget(headers, "Authorization");
+    var uid = hget(headers, "New-Api-User");
+    var ses = sessionOf(ck);
+    var bearer = String(auth || "").replace(/^Bearer\s+/i, "");
 
-  if (!ses) {
-    $done({});
-  } else {
-    var last = $persistentStore.read(K_LAST) || "";
-    if (ses === last) {
-      // 同一个登录态，不重复投递
+    if (!ck && !bearer) {
+      // 纯静态资源请求，忽略
       $done({});
     } else {
-      $persistentStore.write(ses, K_LAST);
-      if (uid) $persistentStore.write(String(uid), K_UID);
-      $httpClient.post(
-        {
-          url: EP,
-          headers: { "Content-Type": "application/json", "X-Token": TOKEN },
-          body: JSON.stringify({ cookie: ck, uid: uid || $persistentStore.read(K_UID) || "" }),
-          timeout: 60000,
-          "auto-cookie": false,
-          "auto-redirect": true
-        },
-        function (err, resp, data) {
-          if (err) {
-            notify("❌ 投递失败", String(err));
-            return $done({});
-          }
-          var j = null;
-          try { j = JSON.parse(data); } catch (e) {}
-          if (!j || !j.ok) {
-            notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
-            return $done({});
-          }
-          var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
-          notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ Cookie 已投递", log);
-          $done({});
+      var key = ses || bearer.slice(0, 32) || "";
+      var last = $persistentStore.read(K_LAST) || "";
+      if (!key) {
+        // 有 Cookie 但没有 session，也不是 Bearer：把看到的情况报一次，便于定位
+        var lastSeen = $persistentStore.read("runanytime_seen") || "";
+        var now = String(Math.floor(Date.now() / 300000));
+        if (lastSeen !== now) {
+          $persistentStore.write(now, "runanytime_seen");
+          var names = String(ck || "").split(";").map(function (x) { return String(x).split("=")[0].trim(); }).filter(Boolean).join(",");
+          notify("👀 看到请求但没有登录态", "Cookie 字段: " + (names || "无") + " · " + String(ck || "").length + " 字节");
         }
-      );
+        $done({});
+      } else if (key === last) {
+        $done({});
+      } else {
+        $persistentStore.write(key, K_LAST);
+        if (uid) $persistentStore.write(String(uid), K_UID);
+        $httpClient.post(
+          {
+            url: EP,
+            headers: { "Content-Type": "application/json", "X-Token": TOKEN },
+            body: JSON.stringify({
+              cookie: ck || "",
+              token: bearer || "",
+              uid: uid || $persistentStore.read(K_UID) || ""
+            }),
+            timeout: 60000,
+            "auto-cookie": false,
+            "auto-redirect": true
+          },
+          function (err, resp, data) {
+            if (err) {
+              notify("❌ 投递失败", String(err));
+              return $done({});
+            }
+            var j = null;
+            try { j = JSON.parse(data); } catch (e) {}
+            if (!j || !j.ok) {
+              notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
+              return $done({});
+            }
+            var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
+            notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ 已投递（签到未成功）", log);
+            $done({});
+          }
+        );
+      }
     }
-  }
   }
 } else {
   // 手动自检（Loon 脚本列表里点「RunAnyTime 自检」）
