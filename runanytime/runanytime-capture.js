@@ -24,6 +24,7 @@ function argOf(name) {
 
 var EP = argOf("hook");
 var TOKEN = argOf("token");
+var VERSION = "v2";
 var K_LAST = "runanytime_last_session";
 var K_UID = "runanytime_uid";
 
@@ -94,5 +95,27 @@ if (typeof $request !== "undefined" && $request) {
   }
   }
 } else {
-  $done({});
+  // 手动自检（Loon 脚本列表里点「RunAnyTime 自检」）
+  if (!EP || !TOKEN) {
+    notify("❌ 未配置", "插件参数 hook / token 为空");
+    $done();
+  } else {
+    $httpClient.get(
+      {
+        url: EP,
+        headers: { "X-Token": TOKEN },
+        timeout: 15000,
+        "auto-cookie": false
+      },
+      function (err, resp, data) {
+        if (err) {
+          notify("❌ 连不上服务器", VERSION + " · " + String(err));
+          return $done();
+        }
+        var st = resp && resp.status ? resp.status : 0;
+        notify("✅ 脚本已加载 " + VERSION, "服务器返回 HTTP " + st + "（405/404 表示地址正确、可达）");
+        $done();
+      }
+    );
+  }
 }
