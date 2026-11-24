@@ -24,7 +24,7 @@ function argOf(name) {
 
 var EP = argOf("hook");
 var TOKEN = argOf("token");
-var VERSION = "v3";
+var VERSION = "v4";
 var K_LAST = "runanytime_last_session";
 var K_UID = "runanytime_uid";
 
@@ -62,7 +62,7 @@ if (typeof $request !== "undefined" && $request) {
       // 纯静态资源请求，忽略
       $done({});
     } else {
-      var key = ses || bearer.slice(0, 32) || "";
+      var key = ses ? "s:" + ses : (bearer ? "b:" + bearer : "");
       var last = $persistentStore.read(K_LAST) || "";
       if (!key) {
         // 有 Cookie 但没有 session，也不是 Bearer：把看到的情况报一次，便于定位
@@ -101,6 +101,9 @@ if (typeof $request !== "undefined" && $request) {
             try { j = JSON.parse(data); } catch (e) {}
             if (!j || !j.ok) {
               notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
+              return $done({});
+            }
+            if (j.skipped) {
               return $done({});
             }
             var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
