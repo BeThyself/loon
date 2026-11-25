@@ -1,5 +1,5 @@
 #!name=NodeSeek 链接跳 NS Connect
-#!desc=在 Safari 或其它 App 点 NodeSeek 帖子链接时，直接改用 NS Connect 打开。需要 App 支持 nsconnect://post 深链（上游 PR 已提交，旧版本只会停在首页）。
+#!desc=在 Safari 或其它 App 点 NodeSeek 帖子链接时，直接改用 NS Connect 打开。需要 App 支持 nsconnect://post 深链（v1.5.0 起）。要临时停用就关掉这个插件。
 #!openUrl=https://github.com/BeThyself/loon/blob/main/nodeseek-jump/README.md
 #!author=thyself
 #!tag=功能增强
@@ -15,21 +15,17 @@
 #   https://www.nodeseek.com/post-139218-3  → nsconnect://post/139218-3
 # 思路同常见的 Telegram 重定向插件（t.me → tg://resolve），只是换目标 scheme。
 #
-# 前置条件：App 必须支持 nsconnect://post/...，否则只会打开到首页。
-# 上游实现：https://github.com/tyrad/nodeseek/pull/19
-# 自测：Safari 地址栏输入 nsconnect://post/139218，能进帖子页即已支持。
-#
-# 必须打开 MitM 且根证书已信任，否则 Loon 看不到 HTTPS 路径，规则不命中。
+# 前置条件：
+#   1. App 版本 ≥ 1.5.0（含 nsconnect://post 路由）。自测：Safari 地址栏输入
+#      nsconnect://post/139218，能进帖子页即已支持。
+#   2. Loon 打开 MitM，且根证书已安装并信任，否则看不到 HTTPS 路径，规则不命中。
 # ===================================================================
-
-[Argument]
-ENABLED = switch, true, tag=总开关, desc=关掉后不再拦截 NodeSeek 链接，恢复网页打开
 
 [Rewrite]
 # 带页码：/post-139218-3 → nsconnect://post/139218-3
-request if ${ENABLED} == true && ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?|$)/ as paged then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?.*)?$/i as paged then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
 # 不带页码：/post-139218 → nsconnect://post/139218
-request if ${ENABLED} == true && ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?|$)/ as single then redirect(302, "nsconnect://post/${single.2}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?.*)?$/i as single then redirect(302, "nsconnect://post/${single.2}")
 
 [MITM]
 hostname = nodeseek.com, www.nodeseek.com
