@@ -1,9 +1,9 @@
-#!name=RunAnyTime 抓 Cookie
-#!desc=在手机浏览器登录 runanytime.hxi.me 后，自动把 Cookie 投递到你的服务器，服务器立刻试跑签到并回推结果
+#!name=RunAnyTime 抓登录态
+#!desc=在手机浏览器打开 runanytime.hxi.me 后，自动把登录态（会话 ID / 短期 token / Cookie）投递到服务器，服务器立刻试跑签到并回推结果
 #!author=thyself
 #!system=iOS,iPadOS
 #!loon_version=3.5.1(988)
-#!date=2026-11-24
+#!date=2026-11-25
 #!tag=签到,工具
 
 [Argument]
@@ -12,7 +12,8 @@ token = input,"",tag=令牌,desc=X-Token 的值，由我提供
 
 [Script]
 generic then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with img_url="stethoscope", tag="RunAnyTime 自检", timeout=30
-request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓 Cookie", timeout=70, requires_body=false
+request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓登录态", timeout=70, requires_body=false
+response if ${url} ~= /^https:\/\/runanytime\.hxi\.me\/api\/user\/auth\/refresh/ then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 刷新回包", timeout=30, requires_body=true
 
 [MITM]
 hostname = runanytime.hxi.me
