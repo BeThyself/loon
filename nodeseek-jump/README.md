@@ -27,7 +27,7 @@ Safari 收到 302 后会提示「在 NS Connect 中打开」。
 1. Loon → 配置 → 插件 → 添加：
    `https://raw.githubusercontent.com/BeThyself/loon/main/nodeseek-jump/nodeseek-jump.lpx`
 2. 打开 MitM，确认 Loon 根证书已安装并信任。插件已声明 `hostname = nodeseek.com, www.nodeseek.com`，证书不受信任时看不到 HTTPS 路径，规则永远不命中。
-3. 参数 `ENABLED` 是总开关，关掉后链接恢复用网页打开。
+3. 要临时恢复网页打开，在 Loon 里停用该插件即可（脚本没有参数开关，避免条件不命中）。
 
 ## 排查
 
