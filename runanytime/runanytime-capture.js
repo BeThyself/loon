@@ -1,10 +1,21 @@
 /*
- * RunAnyTime (runanytime.hxi.me) Cookie 抓取 → 投递到自建服务器
+ * RunAnyTime (runanytime.hxi.me) 登录态抓取 → 投递到自建服务器
  *
- * 站点登录要 Turnstile，脚本不做登录；这里只负责：
- *   1. 手机浏览器登录后，抓到请求头里的 Cookie + New-Api-User
- *   2. 只在 session 变化时 POST 到服务器
- *   3. 服务器写入配置、立刻试跑签到，把结果回给通知
+ * v5 · 2026-11-25
+ *  站点不用 Cookie 登录：前端把 access token（JWT，仅 15 分钟）和会话 ID（sid）
+ *  存在 localStorage 里，sid 通过 X-Auth-Session 请求头发给后端，
+ *  POST /api/user/auth/refresh 就靠这个头换新的 access token。
+ *  Loon 读不到 localStorage，但抓得到请求头：
+ *    sid      ← X-Auth-Session
+ *    token    ← Authorization: Bearer
+ *    cookie   ← Cookie（只有 cf_clearance，Cloudflare 用）
+ *  服务器拿 sid 就能随时换新 token，定时签到才可能跑通。
+ *
+ *  去重：sid 变了才投递；同一 sid 反复访问不重复推、不重复签到。
+ *
+ * v6 · 再加一条 response 规则抓 /api/user/auth/refresh 的回包：
+ *  回包里的 data.session.sid 才是刷新用的真会话 ID（JWT 里的 sid 不是），
+ *  data.access_token 是新的短期 token。拿到 sid 后服务器就能自己换 token。
  */
 
 function argOf(name) {
@@ -24,9 +35,11 @@ function argOf(name) {
 
 var EP = argOf("hook");
 var TOKEN = argOf("token");
-var VERSION = "v4";
+var VERSION = "v6";
 var K_LAST = "runanytime_last_session";
 var K_UID = "runanytime_uid";
+var K_NOTIFIED = "runanytime_notified_at";
+var K_SEEN = "runanytime_seen";
 
 function hget(h, name) {
   if (!h) return "";
@@ -46,7 +59,70 @@ function notify(title, body) {
   $notification.post("RunAnyTime " + title, "", String(body || "").slice(0, 400));
 }
 
-if (typeof $request !== "undefined" && $request) {
+function deliver(payload, done) {
+  $httpClient.post(
+    {
+      url: EP,
+      headers: { "Content-Type": "application/json", "X-Token": TOKEN },
+      body: JSON.stringify(payload),
+      timeout: 60000,
+      "auto-cookie": false,
+      "auto-redirect": true
+    },
+    function (err, resp, data) {
+      if (err) {
+        notify("❌ 投递失败", String(err));
+        return done();
+      }
+      var j = null;
+      try { j = JSON.parse(data); } catch (e) {}
+      if (!j || !j.ok) {
+        notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
+        return done();
+      }
+      if (j.skipped) return done();
+      var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
+      notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ 已投递（签到未成功）", log);
+      done();
+    }
+  );
+}
+
+if (typeof $response !== "undefined" && $response) {
+  // 响应分支：抓 /api/user/auth/refresh 的回包
+  if (!EP || !TOKEN) {
+    $done({});
+  } else {
+    var body = typeof $response.body === "string" ? $response.body : "";
+    var j = null;
+    try { j = JSON.parse(body); } catch (e) {}
+    var d = j && j.success && j.data ? j.data : null;
+    var sid2 = d && d.session && typeof d.session.sid === "string" ? d.session.sid : "";
+    var tok2 = d && typeof d.access_token === "string" ? d.access_token : "";
+    var uid2 = d && d.user && d.user.id ? String(d.user.id) : "";
+    if (!sid2) {
+      $done({});
+    } else {
+      var key2 = "sid:" + sid2;
+      var last2 = $persistentStore.read(K_LAST) || "";
+      if (key2 === last2 && !tok2) {
+        $done({});
+      } else {
+        $persistentStore.write(key2, K_LAST);
+        if (uid2) $persistentStore.write(uid2, K_UID);
+        deliver(
+          {
+            cookie: hget($request && $request.headers ? $request.headers : {}, "Cookie") || "",
+            token: tok2,
+            uid: uid2 || $persistentStore.read(K_UID) || "",
+            sid: sid2
+          },
+          function () { $done({}); }
+        );
+      }
+    }
+  }
+} else if (typeof $request !== "undefined" && $request) {
   var headers = $request.headers || {};
   if (!EP || !TOKEN) {
     notify("❌ 未配置", "插件参数 hook / token 为空");
@@ -55,61 +131,29 @@ if (typeof $request !== "undefined" && $request) {
     var ck = hget(headers, "Cookie");
     var auth = hget(headers, "Authorization");
     var uid = hget(headers, "New-Api-User");
+    var sid = hget(headers, "X-Auth-Session");
     var ses = sessionOf(ck);
     var bearer = String(auth || "").replace(/^Bearer\s+/i, "");
 
-    if (!ck && !bearer) {
-      // 纯静态资源请求，忽略
+    // 没有 sid、没有会话 Cookie、也没有 Bearer：静态资源或未登录，忽略
+    if (!sid && !ses && !bearer) {
       $done({});
     } else {
-      var key = ses ? "s:" + ses : (bearer ? "b:" + bearer : "");
+      var key = sid ? "sid:" + sid : (ses ? "s:" + ses : "b:" + bearer);
       var last = $persistentStore.read(K_LAST) || "";
-      if (!key) {
-        // 有 Cookie 但没有 session，也不是 Bearer：把看到的情况报一次，便于定位
-        var lastSeen = $persistentStore.read("runanytime_seen") || "";
-        var now = String(Math.floor(Date.now() / 300000));
-        if (lastSeen !== now) {
-          $persistentStore.write(now, "runanytime_seen");
-          var names = String(ck || "").split(";").map(function (x) { return String(x).split("=")[0].trim(); }).filter(Boolean).join(",");
-          notify("👀 看到请求但没有登录态", "Cookie 字段: " + (names || "无") + " · " + String(ck || "").length + " 字节");
-        }
-        $done({});
-      } else if (key === last) {
+      if (key === last) {
         $done({});
       } else {
         $persistentStore.write(key, K_LAST);
         if (uid) $persistentStore.write(String(uid), K_UID);
-        $httpClient.post(
+        deliver(
           {
-            url: EP,
-            headers: { "Content-Type": "application/json", "X-Token": TOKEN },
-            body: JSON.stringify({
-              cookie: ck || "",
-              token: bearer || "",
-              uid: uid || $persistentStore.read(K_UID) || ""
-            }),
-            timeout: 60000,
-            "auto-cookie": false,
-            "auto-redirect": true
+            cookie: ck || "",
+            token: bearer || "",
+            uid: uid || $persistentStore.read(K_UID) || "",
+            sid: sid || ""
           },
-          function (err, resp, data) {
-            if (err) {
-              notify("❌ 投递失败", String(err));
-              return $done({});
-            }
-            var j = null;
-            try { j = JSON.parse(data); } catch (e) {}
-            if (!j || !j.ok) {
-              notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
-              return $done({});
-            }
-            if (j.skipped) {
-              return $done({});
-            }
-            var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
-            notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ 已投递（签到未成功）", log);
-            $done({});
-          }
+          function () { $done({}); }
         );
       }
     }
@@ -133,7 +177,9 @@ if (typeof $request !== "undefined" && $request) {
           return $done();
         }
         var st = resp && resp.status ? resp.status : 0;
-        notify("✅ 脚本已加载 " + VERSION, "服务器返回 HTTP " + st + "（405/404 表示地址正确、可达）");
+        var seen = $persistentStore.read(K_LAST) || "（还没抓到过）";
+        notify("✅ 脚本已加载 " + VERSION,
+               "服务器 HTTP " + st + " · 已抓到: " + String(seen).slice(0, 40));
         $done();
       }
     );
