@@ -61,7 +61,7 @@
     var key = "notice_" + kind, last = Number(read(key)) || 0;
     if (!force && Date.now() - last < 12 * 3600000) return;
     write(key, Date.now());
-    $notification.post("[随时跑路] " + text, "", VERSION + " · 不自动签到，定时任务尚未恢复");
+    $notification.post("[随时跑路] " + text, "", VERSION + " · 仅保存凭证，签到由服务器定时独立执行");
   }
   var ep = arg("hook"), secret = arg("token");
   var req = typeof $request === "undefined" ? null : $request;

@@ -15,7 +15,7 @@
 | 小黑盒签到 | [`heybox/heybox-checkin.lpx`](heybox/heybox-checkin.lpx) | 抓 Cookie，每天 08:20 自动签到领 20 H 币 | cron + 首次打开签到页 | 本仓库 |
 | AnyRouter 每日签到 | [`anyrouter/anyrouter-checkin.lpx`](anyrouter/anyrouter-checkin.lpx) | 自动过阿里云 WAF 挑战，每天 08:35 签到，通知带余额 | cron + 首次登录网页 | 本仓库 |
 | AgentRouter 每日签到 | [`agentrouter/agentrouter-checkin.lpx`](agentrouter/agentrouter-checkin.lpx) | Cookie / 密码双模式，每天 09:00 签到（本机已改由服务器跑，插件留作备用） | cron + 首次登录网页 | 本仓库 |
-| 随时跑路 刷新凭证 v8 | [`runanytime/runanytime-capture.lpx`](runanytime/runanytime-capture.lpx) | 从成功认证响应独立保存刷新 Cookie，防止普通请求覆盖；当前仅保存，定时仍关闭，待续期验证 | 登录/刷新成功响应 + 手动自检 | 本仓库源码 / 自家 VPS 托管 |
+| 随时跑路 刷新凭证 v8 | [`runanytime/runanytime-capture.lpx`](runanytime/runanytime-capture.lpx) | 从成功认证响应独立保存刷新 Cookie，防止普通请求覆盖；捕获端仅保存；服务器每天北京时间 09:02～09:12 自动续期并签到，隔日稳定性观察中 | 登录/刷新成功响应 + 手动自检 | 本仓库源码 / 自家 VPS 托管 |
 | NodeSeek 链接跳 App | [`nodeseek-jump/nodeseek-jump.lpx`](nodeseek-jump/nodeseek-jump.lpx) | 把 NodeSeek 帖子链接 302 到 NS Connect 深链，点链接直接进 App（需客户端支持 `nsconnect://post`） | 点击帖子链接 | 内嵌于 lpx |
 
 ## 安装
@@ -62,7 +62,7 @@ nodeseek-jump/ nodeseek-jump.lpx
 - [`runanytime/auth_store.py`](runanytime/auth_store.py)：刷新 Cookie 独立保存、文件锁与原子写。
 - [`runanytime/auth_probe.py`](runanytime/auth_probe.py)：显式验证登录状态或刷新凭证，不签到、不发 TG。
 - [`runanytime/receiver.py`](runanytime/receiver.py)：鉴权接收 v8 凭证，目前只保存。
-- [`runanytime/checkin.py`](runanytime/checkin.py)：PoW 签到与北京时间按账号去重；当前定时未启用。
+- [`runanytime/checkin.py`](runanytime/checkin.py)：PoW 签到与北京时间按账号去重；已恢复每天 09:02～09:12 定时，token 失效时自动刷新。
 - `test_capture_v8.js`、`test_auth_backend.py`、`test_auth_store.py`、`test_http_v8.py`、`test_receiver_v8.py`、`test_receiver_edges.py`：脱敏模拟/本地 HTTP 回归测试，运行方式见 [目录 README](runanytime/README.md)。
 
 ## 通用说明

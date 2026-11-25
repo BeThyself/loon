@@ -1,5 +1,5 @@
 #!name=随时跑路 刷新凭证 v8
-#!desc=仅在成功登录或刷新响应中保存 new_api_refresh，响应 Set-Cookie 优先；普通浏览不抓，重复凭证不投递。当前只保存、不签到，定时待续期验证后恢复。
+#!desc=仅在成功登录或刷新响应中保存 new_api_refresh，响应 Set-Cookie 优先；普通浏览不抓，重复凭证不投递。捕获端只保存、不触发签到；每日签到由服务器定时独立执行。
 #!author=thyself
 #!system=iOS,iPadOS
 #!loon_version=3.5.1(988)
