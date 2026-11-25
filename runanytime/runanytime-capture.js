@@ -1,21 +1,15 @@
 /*
  * RunAnyTime (runanytime.hxi.me) 登录态抓取 → 投递到自建服务器
  *
- * v5 · 2026-11-25
- *  站点不用 Cookie 登录：前端把 access token（JWT，仅 15 分钟）和会话 ID（sid）
- *  存在 localStorage 里，sid 通过 X-Auth-Session 请求头发给后端，
- *  POST /api/user/auth/refresh 就靠这个头换新的 access token。
- *  Loon 读不到 localStorage，但抓得到请求头：
- *    sid      ← X-Auth-Session
- *    token    ← Authorization: Bearer
- *    cookie   ← Cookie（只有 cf_clearance，Cloudflare 用）
- *  服务器拿 sid 就能随时换新 token，定时签到才可能跑通。
+ * v7 · 2026-11-25
+ *  站点登录态：access token（JWT，15 分钟）+ 会话 ID（sid，走 X-Auth-Session 头）。
+ *  服务端无法自行刷新（refresh 接口绑定浏览器环境，从服务器 IP 一律 401），
+ *  所以策略是「抓到时立刻签到」：token 活着的那 15 分钟里把签到做掉。
  *
- *  去重：sid 变了才投递；同一 sid 反复访问不重复推、不重复签到。
- *
- * v6 · 再加一条 response 规则抓 /api/user/auth/refresh 的回包：
- *  回包里的 data.session.sid 才是刷新用的真会话 ID（JWT 里的 sid 不是），
- *  data.access_token 是新的短期 token。拿到 sid 后服务器就能自己换 token。
+ *  去重（v7 重写，解决刷屏）：
+ *    - 只看 token 变化 / sid 变化，两个都没变直接退出，不发请求、不发通知
+ *    - 30 秒冷却：不是 sid 变更的投递，30 秒内最多一次
+ *    - 服务器返回 skipped / 空 body / {} 一律静默，不弹通知
  */
 
 function argOf(name) {
@@ -35,11 +29,13 @@ function argOf(name) {
 
 var EP = argOf("hook");
 var TOKEN = argOf("token");
-var VERSION = "v6";
-var K_LAST = "runanytime_last_session";
+var VERSION = "v7";
+var K_TOK = "runanytime_last_token";
+var K_SID = "runanytime_last_sid";
 var K_UID = "runanytime_uid";
-var K_NOTIFIED = "runanytime_notified_at";
+var K_ATS = "runanytime_last_post";
 var K_SEEN = "runanytime_seen";
+var COOLDOWN = 30000;
 
 function hget(h, name) {
   if (!h) return "";
@@ -59,67 +55,86 @@ function notify(title, body) {
   $notification.post("RunAnyTime " + title, "", String(body || "").slice(0, 400));
 }
 
-function deliver(payload, done) {
+function post(payload, onDone) {
   $httpClient.post(
     {
       url: EP,
       headers: { "Content-Type": "application/json", "X-Token": TOKEN },
       body: JSON.stringify(payload),
-      timeout: 60000,
+      timeout: 90000,
       "auto-cookie": false,
       "auto-redirect": true
     },
     function (err, resp, data) {
       if (err) {
         notify("❌ 投递失败", String(err));
-        return done();
+        return onDone(false);
       }
+      var raw = String(data || "").trim();
       var j = null;
-      try { j = JSON.parse(data); } catch (e) {}
-      if (!j || !j.ok) {
-        notify("❌ 服务器拒绝", (j && j.error) || String(data).slice(0, 200));
-        return done();
+      try { j = raw ? JSON.parse(raw) : null; } catch (e) { j = null; }
+      // 空 body / {} / 解析失败：当作没拿到明确答复，静默
+      if (!j || Object.keys(j).length === 0) return onDone(false);
+      if (!j.ok) {
+        var why = j.error ? String(j.error) : "";
+        if (why) notify("❌ 服务器拒绝", why);
+        return onDone(false);
       }
-      if (j.skipped) return done();
-      var log = String(j.log || j.note || j.error || "").replace(/\*\*/g, "");
+      if (j.skipped || j.note) return onDone(true);   // 没变化 / 冷却中：静默
+      var log = String(j.log || "").replace(/\*\*/g, "");
       notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ 已投递（签到未成功）", log);
-      done();
+      onDone(true);
     }
   );
 }
 
+function maybeDeliver(payload, done) {
+  var lastTok = $persistentStore.read(K_TOK) || "";
+  var lastSid = $persistentStore.read(K_SID) || "";
+  var sid = String(payload.sid || "");
+  var tok = String(payload.token || "");
+  var sidNew = !!sid && sid !== lastSid;
+  var tokNew = !!tok && tok !== lastTok;
+
+  if (!sidNew && !tokNew) return done();
+
+  var lastAt = Number($persistentStore.read(K_ATS) || 0) || 0;
+  if (!sidNew && Date.now() - lastAt < COOLDOWN) return done();
+
+  post(payload, function (ok) {
+    if (ok) {
+      if (sid) $persistentStore.write(sid, K_SID);
+      if (tok) $persistentStore.write(tok, K_TOK);
+      if (payload.uid) $persistentStore.write(String(payload.uid), K_UID);
+      $persistentStore.write(String(Date.now()), K_ATS);
+    }
+    done();
+  });
+}
+
 if (typeof $response !== "undefined" && $response) {
-  // 响应分支：抓 /api/user/auth/refresh 的回包
+  // 响应分支：/api/user/auth/refresh 的回包里有 session.sid 与新的 access_token
   if (!EP || !TOKEN) {
     $done({});
   } else {
     var body = typeof $response.body === "string" ? $response.body : "";
-    var j = null;
-    try { j = JSON.parse(body); } catch (e) {}
-    var d = j && j.success && j.data ? j.data : null;
+    var jr = null;
+    try { jr = JSON.parse(body); } catch (e) { jr = null; }
+    var d = jr && jr.success && jr.data ? jr.data : null;
     var sid2 = d && d.session && typeof d.session.sid === "string" ? d.session.sid : "";
     var tok2 = d && typeof d.access_token === "string" ? d.access_token : "";
-    var uid2 = d && d.user && d.user.id ? String(d.user.id) : "";
-    if (!sid2) {
+    if (!sid2 && !tok2) {
       $done({});
     } else {
-      var key2 = "sid:" + sid2;
-      var last2 = $persistentStore.read(K_LAST) || "";
-      if (key2 === last2 && !tok2) {
-        $done({});
-      } else {
-        $persistentStore.write(key2, K_LAST);
-        if (uid2) $persistentStore.write(uid2, K_UID);
-        deliver(
-          {
-            cookie: hget($request && $request.headers ? $request.headers : {}, "Cookie") || "",
-            token: tok2,
-            uid: uid2 || $persistentStore.read(K_UID) || "",
-            sid: sid2
-          },
-          function () { $done({}); }
-        );
-      }
+      maybeDeliver(
+        {
+          cookie: hget($request && $request.headers ? $request.headers : {}, "Cookie") || "",
+          token: tok2,
+          uid: d && d.user && d.user.id ? String(d.user.id) : "",
+          sid: sid2
+        },
+        function () { $done({}); }
+      );
     }
   }
 } else if (typeof $request !== "undefined" && $request) {
@@ -135,27 +150,18 @@ if (typeof $response !== "undefined" && $response) {
     var ses = sessionOf(ck);
     var bearer = String(auth || "").replace(/^Bearer\s+/i, "");
 
-    // 没有 sid、没有会话 Cookie、也没有 Bearer：静态资源或未登录，忽略
-    if (!sid && !ses && !bearer) {
+    if (!sid && !bearer && !ses) {
       $done({});
     } else {
-      var key = sid ? "sid:" + sid : (ses ? "s:" + ses : "b:" + bearer);
-      var last = $persistentStore.read(K_LAST) || "";
-      if (key === last) {
-        $done({});
-      } else {
-        $persistentStore.write(key, K_LAST);
-        if (uid) $persistentStore.write(String(uid), K_UID);
-        deliver(
-          {
-            cookie: ck || "",
-            token: bearer || "",
-            uid: uid || $persistentStore.read(K_UID) || "",
-            sid: sid || ""
-          },
-          function () { $done({}); }
-        );
-      }
+      maybeDeliver(
+        {
+          cookie: ck || "",
+          token: bearer || "",
+          uid: uid || "",
+          sid: sid || ""
+        },
+        function () { $done({}); }
+      );
     }
   }
 } else {
@@ -177,9 +183,8 @@ if (typeof $response !== "undefined" && $response) {
           return $done();
         }
         var st = resp && resp.status ? resp.status : 0;
-        var seen = $persistentStore.read(K_LAST) || "（还没抓到过）";
-        notify("✅ 脚本已加载 " + VERSION,
-               "服务器 HTTP " + st + " · 已抓到: " + String(seen).slice(0, 40));
+        var sid = $persistentStore.read(K_SID) || "（还没抓到）";
+        notify("✅ 脚本已加载 " + VERSION, "服务器 HTTP " + st + " · sid: " + String(sid).slice(0, 8));
         $done();
       }
     );
