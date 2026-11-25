@@ -1,5 +1,5 @@
-#!name=RunAnyTime 抓登录态
-#!desc=在手机浏览器打开 runanytime.hxi.me 后，自动把登录态（会话 ID / 短期 token / Cookie）投递到服务器，服务器立刻试跑签到并回推结果
+#!name=随时跑路 刷新凭证 v8
+#!desc=仅在成功登录或刷新响应中保存 new_api_refresh，响应 Set-Cookie 优先；普通浏览不抓，重复凭证不投递。当前只保存、不签到，定时待续期验证后恢复。
 #!author=thyself
 #!system=iOS,iPadOS
 #!loon_version=3.5.1(988)
@@ -11,9 +11,8 @@ hook = input,"",tag=投递地址,desc=形如 https://ra.xxx.nip.io/<暗号>/cook
 token = input,"",tag=令牌,desc=X-Token 的值，由我提供
 
 [Script]
-generic then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with img_url="stethoscope", tag="RunAnyTime 自检", timeout=30
-request if ${url} ~= /^https:\/\/runanytime\.hxi\.me\// then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 抓登录态", timeout=70, requires_body=false
-response if ${url} ~= /^https:\/\/runanytime\.hxi\.me\/api\/user\/auth\/refresh/ then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture.js", {${hook}, ${token}}) with tag="RunAnyTime 刷新回包", timeout=30, requires_body=true
+generic then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture-v8.js", {${hook}, ${token}}) with img_url="stethoscope", tag="随时跑路 v8 自检", timeout=20
+response if ${url} ~= /^https:\/\/runanytime\.hxi\.me\/(?:api\/user\/(?:auth\/(?:refresh|login)|login(?:\/2fa)?|passkey\/login\/finish)|api\/oauth\/[^?#]+)\/?(?:[?#]|$)/ then script("https://ra.161.33.211.131.nip.io/s/runanytime-capture-v8.js", {${hook}, ${token}}) with tag="随时跑路 刷新凭证 v8", timeout=20, requires_body=true
 
 [MITM]
 hostname = runanytime.hxi.me

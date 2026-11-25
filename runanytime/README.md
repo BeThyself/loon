@@ -1,68 +1,91 @@
-# RunAnyTime 抓 Cookie（Loon）
+# 随时跑路 · 刷新凭证捕获 v8
 
-配合服务器端 `/opt/runanytime/` 使用：手机浏览器登录 runanytime.hxi.me 后，Loon 抓到 Cookie 直接投递到你的服务器，服务器写入配置并立刻试跑签到，结果回到通知里。
+Loon 捕获 runanytime.hxi.me 成功认证响应中的刷新凭证，再投递到自建服务器。**目前是续期验证阶段：接收端只保存，不自动刷新、不签到、不发 TG；每日定时保持关闭。**
 
-## 为什么需要它
+## 为什么旧版第二天失败
 
-该站（随时跑路公益站）是 New-API + 私有 PoW 签到：
-- 登录接口要 Turnstile，纯脚本无法登录
-- 签到要 `SHA-256(prefix+nonce)` 前 difficulty 个 bit 为 0
+已确认 access token 是有效期 900 秒的 JWT。之前只保存 Bearer 与 `cf_clearance`，缺少长期刷新认证链。
 
-所以拆成两段：登录用浏览器（人工过一次验证），签到放服务器（CPU 算 PoW 快）。
+2026-11-25 的无凭证刷新请求返回 401，并清除 `new_api_refresh`（`Path=/api/user/auth; HttpOnly; SameSite=Strict`）。前端刷新客户端启用 `withCredentials`，会自动携带匹配路径的 Cookie。历史日志中 auth 请求 Cookie 为 452 字节，普通 API 为 333 字节，接收端整条覆盖，可能丢失了 auth 专属 Cookie。**452 字节那份原始内容未保留，不能断言其差额必然是刷新 Cookie。**
 
-## 安装
+更正之前不成立的描述：
 
-1. Loon → 配置 → 插件 → 添加：
-   `https://raw.githubusercontent.com/BeThyself/loon/main/runanytime/runanytime-capture.lpx`
-2. 打开插件参数，填 `hook`（投递地址）和 `token`
-3. 开 MitM（插件已声明 `hostname = runanytime.hxi.me`）
-4. 用 Safari 打开 runanytime.hxi.me 登录（该站需要过一次 Turnstile）
-5. 登录成功后通知：`✅ 已投递并签到成功` 或 `ℹ️ Cookie 已投递` + 服务器返回的日志
+- 没有证据证明服务器/IP/TLS 绑定，不能由残缺凭证的 401 得出“纯 HTTP 不可定时”。
+- 前端 token/session 存模块内存，localStorage 在该认证模块仅保存 `user`。
+- 没有证据证明 JWT sid 与响应 sid 是不同性质的秘密；sid 本身不等于完整刷新凭证。
+- 刷新 Cookie 有效期尚未测得，不再写“约一个月”。
 
-## 这个站的登录态是什么（v6）
+## v8 行为
 
-站点不用 Cookie 登录，前端把两样东西放在 localStorage：
+1. 只处理本站成功登录、OAuth 或 `/api/user/auth/refresh` 响应，要求返回有效账号 ID、session.sid 和 access token。
+2. 先读**响应** `Set-Cookie` 的 `new_api_refresh`；没有新值才使用该成功请求里的 Cookie。删除指令不回退到旧值。
+3. 不抓普通请求，不因 Bearer 变化投递。以接收地址、账号、sid、刷新 Cookie 去重，投递确认后才记成功；同一待确认捕获短期合并。
+4. 刷新 Cookie 轮换必须同步新值，但同账号捕获通知 12 小时内最多一条；换账号独立提示。
+5. 服务器独立存刷新 Cookie，普通 Cookie 不能覆盖它；文件锁和原子写防止并发配置损坏。
+6. `✅ 刷新凭证已保存` **不代表**续期或签到已成功。空回包、HTTP 异常不会伪装成成功。
 
-- **access token**：JWT，**只活 15 分钟**
-- **sid**（会话 ID）：刷新接口 `POST /api/user/auth/refresh` 用它换新 token，没有 body，sid 放在 `X-Auth-Session` 请求头里
+## 安装/更新（本次必须更新插件规则）
 
-Loon 读不到 localStorage，所以按两条路抓：
+先记下旧插件里的 `hook` 与 `token`，停用旧版（尤其不要两份并存），再用以下地址更新或重装：
 
-| 规则 | 抓什么 | 用途 |
-|---|---|---|
-| `request` | `Authorization: Bearer`、`Cookie`、`X-Auth-Session` | 拿到当前可用的短期 token，立刻能签到 |
-| `response`（`/api/user/auth/refresh`） | 回包里的 `data.session.sid` + `data.access_token` | 拿到**真正的会话 ID**，服务器可自行续期 |
+[插件原始文件](https://raw.githubusercontent.com/BeThyself/loon/main/runanytime/runanytime-capture.lpx)
 
-**注意**：JWT 里的 `sid` 声明不可用于刷新（实测拿它请求一律 401），只有登录/刷新响应里的 `session.sid` 才行。
+- 参数 `hook`：原来的 HTTPS 接收地址；`token`：原来的投递令牌，均不写进公开仓库。
+- 开启 MITM 并信任证书，hostname 为 `runanytime.hxi.me`。
+- 本版 JS 使用新的 `runanytime-capture-v8.js` 托管地址，以避开旧 URL 缓存；仓库源码仍叫 `runanytime-capture.js`。
+- Safari 正常打开并刷新站点。若已登录，页面刷新会触发其认证恢复；仍抓不到再退出并正常重新登录、人工完成验证码。
+- 捕获成功后可暂时关闭网页，避免浏览器与服务器同时使用可能一次性轮换的刷新 Cookie。
+- Loon 脚本列表可点「随时跑路 v8 自检」查看服务器是否已经保存刷新 Cookie，不显示凭证原文。
 
-## 通知含义
+**不需要把 Cookie、Bearer 或 token 粘贴到聊天中。**
 
-| 通知 | 含义 |
-|---|---|
-| `✅ 已投递并签到成功` | Cookie 已存，服务器签到成功（带余额） |
-| `ℹ️ Cookie 已投递` | Cookie 已存，但签到失败（日志里看原因） |
-| `❌ 投递失败` | 网络问题，服务器不可达 |
-| `❌ 服务器拒绝` | hook/token 不对，或 Cookie 里没有 session |
-| `❌ 未配置` | 插件参数没填 |
+## 验收标准
 
-## 去重（v7）
+只有全部通过后才考虑恢复每日定时：
 
-登录态没变就**完全不发请求、不发通知**：
+1. 成功捕获 `new_api_refresh`，服务器独立落盘。
+2. 服务器主动刷新一次，立即保存响应 Cookie 轮换及新 access token，然后 `/api/user/self` 返回有效账号。
+3. 等原 access token 过期后重新刷新，再验证账号；隔日再验长期稳定性。
+4. 测试签到接口，返回成功或「今日已签到」均如实分类；按北京时间及账号记录去重。
 
-- 客户端只看**两样东西是否变化**：短期 `token`、会话 `sid`；两个都没变直接退出；
-- 非 sid 变更的投递有 **30 秒冷却**，避免一次页面加载连发多条；
-- 服务器逐字段比对（只比这次带了值的字段），没变化回 `{"skipped":true}`；
-- **当天已签到过**（`state.json` 记录的日期等于今天）就只存凭证，不重复跑签到、不弹通知；
-- 服务器返回空 body / `{}` / `skipped` 一律静默。
+浏览器和服务器共用会话可能互相轮换刷新 Cookie，失败后不要多次重试。若完整凭证仍失败，再研究会话撤销、Cookie 轮换冲突或环境绑定，而不是先假设原因。
 
-## 已知限制
+## 安全与限制
 
-refresh 接口（`/api/user/auth/refresh`）**只在浏览器环境可用**：实测从服务器带真 sid、有效 token、`cf_clearance` 请求一律 `401 Unauthorized`，说明它绑了浏览器侧的东西。
+- 接收端只监听回环地址，通过 HTTPS 反代访问；路径暗号与 `X-Token` 都要匹配。GET 自检同样鉴权。
+- 不接受旧版 schema 的普通请求投递；限制请求体大小；配置权限 600。
+- 不在日志、通知和 HTTP 回包里打印任何 Cookie、Bearer、sid 或投递令牌。
+- 服务器默认 capture-only。`auth_probe.py` 是显式执行的验证工具，不由接收请求自动启动。
+- Cookie jar 遵守域、路径、过期与 Set-Cookie 轮换，刷新成功后立即落盘，避免只更新内存。
+- 捕获仍需要用户在浏览器登录、手工完成 Turnstile；不承诺刷新 Cookie 的长期有效性。
 
-所以定时签到**做不到**，只能做到「你打开站点 → 抓到新鲜 token（15 分钟）→ 服务器立刻签到」。当天签过之后不会再有通知。
+## 文件与测试
 
-## 安全
+- `runanytime-capture.lpx`：Loon 参数、MITM、认证响应规则和自检入口。
+- `runanytime-capture.js`：v8 客户端。
+- `test_capture_v8.js`：Node 模拟测试（不访问真实账号）。
+- `auth_store.py`：服务端凭证存储、文件锁和 Cookie jar。
+- `auth_probe.py`：显式刷新与登录状态验证，不签到、不发 TG。
+- `receiver.py`：capture-only 接收端。
+- `checkin.py`：PoW 签到程序，定时关闭时不会自动运行。
+- `test_auth_backend.py`、`test_auth_store.py`：服务端存储与认证回归测试。
+- `test_http_v8.py`：真实本地 HTTP Cookie 轮换和路径测试。
+- `test_receiver_v8.py`：接收端鉴权、去重及只保存行为测试。
+- `test_receiver_edges.py`：残缺凭证、Cookie 注入与未来时间拒绝测试。
 
-- 服务器端只接受 `POST /<暗号>/cookie`，且要 `X-Token` 匹配；只写 Cookie 与 uid 两个字段，不返回任何已有配置。
-- 投递地址里的暗号与 token 只存在于插件参数，不在仓库里。
-- Cookie 有效期约一个月，过期后重新登录一次即可。
+```sh
+node --check runanytime-capture.js
+node test_capture_v8.js
+python3 -m unittest -v test_auth_backend test_auth_store test_http_v8 test_receiver_v8 test_receiver_edges
+python3 /var/minis/skills/loon-dev/scripts/loon_lint.py runanytime-capture.lpx
+# 以下在已配置的服务器目录中显式执行；不会发起签到：
+python3 auth_probe.py --verify
+python3 auth_probe.py --refresh
+```
+
+## 来源与参考
+
+- 站点公开前端认证模块与本账号历史脱敏日志。
+- [Loon 官方脚本 API](https://nsloon.app/docs/Script/script_api)。
+- [Python 3.8 CookieJar 文档](https://docs.python.org/3.8/library/http.cookiejar.html)。
+- PoW 适配参考 [Auroraee/checkin-pilot](https://github.com/Auroraee/checkin-pilot)、[wangwingzero/sign-in](https://github.com/wangwingzero/sign-in)。

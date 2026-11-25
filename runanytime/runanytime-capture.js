@@ -1,192 +1,129 @@
 /*
- * RunAnyTime (runanytime.hxi.me) 登录态抓取 → 投递到自建服务器
- *
- * v7 · 2026-11-25
- *  站点登录态：access token（JWT，15 分钟）+ 会话 ID（sid，走 X-Auth-Session 头）。
- *  服务端无法自行刷新（refresh 接口绑定浏览器环境，从服务器 IP 一律 401），
- *  所以策略是「抓到时立刻签到」：token 活着的那 15 分钟里把签到做掉。
- *
- *  去重（v7 重写，解决刷屏）：
- *    - 只看 token 变化 / sid 变化，两个都没变直接退出，不发请求、不发通知
- *    - 30 秒冷却：不是 sid 变更的投递，30 秒内最多一次
- *    - 服务器返回 skipped / 空 body / {} 一律静默，不弹通知
+ * 随时跑路登录态捕获 v8 · 2026-11-25 · thyself
+ * 仅处理成功认证响应；Set-Cookie 优先于原请求 Cookie。
+ * 刷新 Cookie 独立保存，忽略普通 API 和 Bearer 轮换。捕获不等于续期/签到成功。
+ * Loon API: https://nsloon.app/docs/Script/script_api
  */
-
-function argOf(name) {
-  var a = typeof $argument === "undefined" ? null : $argument;
-  if (!a) return "";
-  if (typeof a === "object") {
-    var v = a[name];
-    return v === undefined || v === null ? "" : String(v);
-  }
-  var parts = String(a).split("&");
-  for (var i = 0; i < parts.length; i++) {
-    var idx = parts[i].indexOf("=");
-    if (idx > 0 && parts[i].slice(0, idx) === name) return parts[i].slice(idx + 1);
-  }
-  return "";
-}
-
-var EP = argOf("hook");
-var TOKEN = argOf("token");
-var VERSION = "v7";
-var K_TOK = "runanytime_last_token";
-var K_SID = "runanytime_last_sid";
-var K_UID = "runanytime_uid";
-var K_ATS = "runanytime_last_post";
-var K_SEEN = "runanytime_seen";
-var COOLDOWN = 30000;
-
-function hget(h, name) {
-  if (!h) return "";
-  var low = name.toLowerCase();
-  for (var k in h) {
-    if (Object.prototype.hasOwnProperty.call(h, k) && k.toLowerCase() === low) return String(h[k]);
-  }
-  return "";
-}
-
-function sessionOf(ck) {
-  var m = String(ck || "").match(/(?:^|;\s*)session=([^;]*)/);
-  return m ? m[1] : "";
-}
-
-function notify(title, body) {
-  $notification.post("RunAnyTime " + title, "", String(body || "").slice(0, 400));
-}
-
-function post(payload, onDone) {
-  $httpClient.post(
-    {
-      url: EP,
-      headers: { "Content-Type": "application/json", "X-Token": TOKEN },
-      body: JSON.stringify(payload),
-      timeout: 90000,
-      "auto-cookie": false,
-      "auto-redirect": true
-    },
-    function (err, resp, data) {
-      if (err) {
-        notify("❌ 投递失败", String(err));
-        return onDone(false);
+(function () {
+  var VERSION = "v8";
+  var P = "runanytime_v8_";
+  var completed = false;
+  function done() { if (!completed) { completed = true; $done({}); } }
+  function arg(name) {
+    var a = typeof $argument === "undefined" ? null : $argument;
+    if (!a) return "";
+    if (typeof a === "object") return String(a[name] || "");
+    var parts = String(a).split("&");
+    for (var i = 0; i < parts.length; i++) {
+      var at = parts[i].indexOf("=");
+      if (parts[i].slice(0, at) === name) {
+        try { return decodeURIComponent(parts[i].slice(at + 1)); } catch (e) { return ""; }
       }
-      var raw = String(data || "").trim();
-      var j = null;
-      try { j = raw ? JSON.parse(raw) : null; } catch (e) { j = null; }
-      // 空 body / {} / 解析失败：当作没拿到明确答复，静默
-      if (!j || Object.keys(j).length === 0) return onDone(false);
-      if (!j.ok) {
-        var why = j.error ? String(j.error) : "";
-        if (why) notify("❌ 服务器拒绝", why);
-        return onDone(false);
+    }
+    return "";
+  }
+  function read(k) { return $persistentStore.read(P + k) || ""; }
+  function write(k, v) { $persistentStore.write(v === undefined ? undefined : String(v), P + k); }
+  function json(s) { try { return JSON.parse(s); } catch (e) { return null; } }
+  function header(h, name) {
+    for (var k in (h || {})) if (k.toLowerCase() === name.toLowerCase()) return h[k];
+    return "";
+  }
+  function requestCookie(raw, name) {
+    var parts = String(raw || "").split(";");
+    for (var i = 0; i < parts.length; i++) {
+      var at = parts[i].indexOf("=");
+      if (parts[i].slice(0, at).trim() === name) return parts[i].slice(at + 1).trim();
+    }
+    return "";
+  }
+  function responseCookie(h, name) {
+    var raw = header(h, "Set-Cookie");
+    var lines = Array.isArray(raw) ? raw : [String(raw || "")];
+    var result = { found: false, value: "", removed: false };
+    for (var i = 0; i < lines.length; i++) {
+      // Only split at an actual cookie boundary, not the comma in Expires.
+      var parts = String(lines[i]).split(/\r?\n|,(?=\s*[^\s;,=]+\s*=)/);
+      for (var j = 0; j < parts.length; j++) {
+        var match = parts[j].match(/^\s*([^=;\s]+)=([^;]*)/);
+        if (!match || match[1] !== name) continue;
+        var value = match[2].trim();
+        if (/^".*"$/.test(value)) value = value.slice(1, -1);
+        var age = parts[j].match(/;\s*max-age\s*=\s*(-?\d+)/i);
+        var expiry = parts[j].match(/;\s*expires\s*=\s*([^;]+)/i);
+        result = { found: true, value: value, removed: !value || !!(age && Number(age[1]) <= 0) ||
+          !!(!age && expiry && Date.parse(expiry[1]) <= Date.now()) };
       }
-      if (j.skipped || j.note) return onDone(true);   // 没变化 / 冷却中：静默
-      var log = String(j.log || "").replace(/\*\*/g, "");
-      notify(j.code === 0 ? "✅ 已投递并签到成功" : "ℹ️ 已投递（签到未成功）", log);
-      onDone(true);
     }
-  );
-}
-
-function maybeDeliver(payload, done) {
-  var lastTok = $persistentStore.read(K_TOK) || "";
-  var lastSid = $persistentStore.read(K_SID) || "";
-  var sid = String(payload.sid || "");
-  var tok = String(payload.token || "");
-  var sidNew = !!sid && sid !== lastSid;
-  var tokNew = !!tok && tok !== lastTok;
-
-  if (!sidNew && !tokNew) return done();
-
-  var lastAt = Number($persistentStore.read(K_ATS) || 0) || 0;
-  if (!sidNew && Date.now() - lastAt < COOLDOWN) return done();
-
-  post(payload, function (ok) {
-    if (ok) {
-      if (sid) $persistentStore.write(sid, K_SID);
-      if (tok) $persistentStore.write(tok, K_TOK);
-      if (payload.uid) $persistentStore.write(String(payload.uid), K_UID);
-      $persistentStore.write(String(Date.now()), K_ATS);
+    return result;
+  }
+  function note(kind, text, force) {
+    var key = "notice_" + kind, last = Number(read(key)) || 0;
+    if (!force && Date.now() - last < 12 * 3600000) return;
+    write(key, Date.now());
+    $notification.post("[随时跑路] " + text, "", VERSION + " · 不自动签到，定时任务尚未恢复");
+  }
+  var ep = arg("hook"), secret = arg("token");
+  var req = typeof $request === "undefined" ? null : $request;
+  var res = typeof $response === "undefined" ? null : $response;
+  if (req && !res) return done(); // Old request rules must never deliver.
+  if (!/^https:\/\/[^\s#]+$/.test(ep) || !secret) {
+    note("config", "⚠️ 请填写 HTTPS 投递地址和令牌", !req);
+    return done();
+  }
+  var options = { url: ep, headers: { "X-Token": secret }, timeout: 15000,
+    "auto-cookie": false, "auto-redirect": false, insecure: false };
+  if (!req && !res) {
+    options.url = ep.replace(/\/cookie$/, "/status");
+    $httpClient.get(options, function (err, resp, body) {
+      var status = Number(resp && resp.status) || 0, result = json(body);
+      if (err || status !== 200 || !result || result.ok !== true) {
+        note("status", "❌ 自检失败（HTTP " + status + "）", true);
+      } else {
+        note("status", result.has_refresh ? "✅ 服务器已存刷新 Cookie；续期结果需另行验证" :
+          "ℹ️ 服务器尚缺刷新 Cookie，请重新登录或刷新网页", true);
+      }
+      done();
+    });
+    return;
+  }
+  if (!req || !res || !/^https:\/\/runanytime\.hxi\.me\/(?:api\/user\/(?:auth\/(?:refresh|login)|login(?:\/2fa)?|passkey\/login\/finish)|api\/oauth\/[^?#]+)\/?(?:[?#]|$)/.test(String(req.url || ""))) return done();
+  var status = Number(res.status) || 0;
+  var body = typeof res.body === "string" ? json(res.body) : null;
+  var d = body && body.success === true && body.data;
+  if (status !== 200 || !d || !d.session || typeof d.session.sid !== "string" || !d.session.sid ||
+      typeof d.access_token !== "string" || !d.access_token || !d.user || !/^[1-9]\d*$/.test(String(d.user.id))) return done();
+  var refresh = responseCookie(res.headers, "new_api_refresh");
+  if (refresh.removed) return done();
+  var value = refresh.found ? refresh.value : requestCookie(header(req.headers, "Cookie"), "new_api_refresh");
+  if (!value) {
+    note("missing", "⚠️ 认证响应有效，但未发现刷新 Cookie");
+    return done();
+  }
+  var uid = String(d.user.id), sid = d.session.sid;
+  var key = JSON.stringify([ep, uid, sid, value]);
+  if (read("ack") === key) return done();
+  var pending = json(read("pending"));
+  if (pending && pending.key === key && Date.now() - pending.at < 30000) return done();
+  var at = Date.now();
+  write("pending", JSON.stringify({ key: key, at: at }));
+  var cf = responseCookie(res.headers, "cf_clearance");
+  var clearance = cf.found ? (cf.removed ? "" : cf.value) : requestCookie(header(req.headers, "Cookie"), "cf_clearance");
+  var payload = { schema: 8, source: "auth-response", observed_at: at, refresh_cookie: value,
+    cookie: clearance ? "cf_clearance=" + clearance : "", user_agent: String(header(req.headers, "User-Agent") || ""),
+    token: d.access_token, sid: sid, uid: uid };
+  options.headers["Content-Type"] = "application/json";
+  options.body = JSON.stringify(payload);
+  $httpClient.post(options, function (err, resp, data) {
+    var active = json(read("pending"));
+    if (active && active.key === key) write("pending", undefined);
+    var result = json(data), status = Number(resp && resp.status) || 0;
+    if (err || status !== 200 || !result || result.ok !== true || result.has_refresh !== true) {
+      note("delivery", "❌ 凭证投递未确认（HTTP " + status + "）");
+      return done();
     }
+    if (at >= (Number(read("ack_at")) || 0)) { write("ack", key); write("ack_at", at); }
+    if (!result.skipped) note("captured_" + uid, "✅ 刷新凭证已保存，等待续期验证");
     done();
   });
-}
-
-if (typeof $response !== "undefined" && $response) {
-  // 响应分支：/api/user/auth/refresh 的回包里有 session.sid 与新的 access_token
-  if (!EP || !TOKEN) {
-    $done({});
-  } else {
-    var body = typeof $response.body === "string" ? $response.body : "";
-    var jr = null;
-    try { jr = JSON.parse(body); } catch (e) { jr = null; }
-    var d = jr && jr.success && jr.data ? jr.data : null;
-    var sid2 = d && d.session && typeof d.session.sid === "string" ? d.session.sid : "";
-    var tok2 = d && typeof d.access_token === "string" ? d.access_token : "";
-    if (!sid2 && !tok2) {
-      $done({});
-    } else {
-      maybeDeliver(
-        {
-          cookie: hget($request && $request.headers ? $request.headers : {}, "Cookie") || "",
-          token: tok2,
-          uid: d && d.user && d.user.id ? String(d.user.id) : "",
-          sid: sid2
-        },
-        function () { $done({}); }
-      );
-    }
-  }
-} else if (typeof $request !== "undefined" && $request) {
-  var headers = $request.headers || {};
-  if (!EP || !TOKEN) {
-    notify("❌ 未配置", "插件参数 hook / token 为空");
-    $done({});
-  } else {
-    var ck = hget(headers, "Cookie");
-    var auth = hget(headers, "Authorization");
-    var uid = hget(headers, "New-Api-User");
-    var sid = hget(headers, "X-Auth-Session");
-    var ses = sessionOf(ck);
-    var bearer = String(auth || "").replace(/^Bearer\s+/i, "");
-
-    if (!sid && !bearer && !ses) {
-      $done({});
-    } else {
-      maybeDeliver(
-        {
-          cookie: ck || "",
-          token: bearer || "",
-          uid: uid || "",
-          sid: sid || ""
-        },
-        function () { $done({}); }
-      );
-    }
-  }
-} else {
-  // 手动自检（Loon 脚本列表里点「RunAnyTime 自检」）
-  if (!EP || !TOKEN) {
-    notify("❌ 未配置", "插件参数 hook / token 为空");
-    $done();
-  } else {
-    $httpClient.get(
-      {
-        url: EP,
-        headers: { "X-Token": TOKEN },
-        timeout: 15000,
-        "auto-cookie": false
-      },
-      function (err, resp, data) {
-        if (err) {
-          notify("❌ 连不上服务器", VERSION + " · " + String(err));
-          return $done();
-        }
-        var st = resp && resp.status ? resp.status : 0;
-        var sid = $persistentStore.read(K_SID) || "（还没抓到）";
-        notify("✅ 脚本已加载 " + VERSION, "服务器 HTTP " + st + " · sid: " + String(sid).slice(0, 8));
-        $done();
-      }
-    );
-  }
-}
+})();
