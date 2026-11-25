@@ -16,6 +16,7 @@
 | AnyRouter 每日签到 | [`anyrouter/anyrouter-checkin.lpx`](anyrouter/anyrouter-checkin.lpx) | 自动过阿里云 WAF 挑战，每天 08:35 签到，通知带余额 | cron + 首次登录网页 | 本仓库 |
 | AgentRouter 每日签到 | [`agentrouter/agentrouter-checkin.lpx`](agentrouter/agentrouter-checkin.lpx) | Cookie / 密码双模式，每天 09:00 签到（本机已改由服务器跑，插件留作备用） | cron + 首次登录网页 | 本仓库 |
 | RunAnyTime 抓 Cookie | [`runanytime/runanytime-capture.lpx`](runanytime/runanytime-capture.lpx) | 把 runanytime.hxi.me 的登录态投递到自建服务器，由服务器做 PoW 签到 | 登录网页时投递 + 自带自检入口 | 自家 VPS |
+| NodeSeek 链接跳 App | [`nodeseek-jump/nodeseek-jump.lpx`](nodeseek-jump/nodeseek-jump.lpx) | 把 NodeSeek 帖子链接 302 到 NS Connect 深链，点链接直接进 App（需客户端支持 `nsconnect://post`） | 点击帖子链接 | 内嵌于 lpx |
 
 ## 安装
 
@@ -37,6 +38,7 @@ https://raw.githubusercontent.com/BeThyself/loon/main/<目录>/<插件文件>
 | AnyRouter | `anyrouter.top` |
 | AgentRouter | `agentrouter.org` |
 | RunAnyTime | `runanytime.hxi.me` |
+| NodeSeek 跳转 | `nodeseek.com, www.nodeseek.com` |
 
 ## 目录结构
 
@@ -49,6 +51,7 @@ heybox/       heybox-checkin.lpx · heybox.js
 anyrouter/    anyrouter-checkin.lpx · anyrouter.js
 agentrouter/  agentrouter-checkin.lpx · agentrouter_checkin.js
 runanytime/   runanytime-capture.lpx · runanytime-capture.js
+nodeseek-jump/ nodeseek-jump.lpx
 ```
 
 ## 通用说明
@@ -69,3 +72,4 @@ runanytime/   runanytime-capture.lpx · runanytime-capture.js
 - `anyrouter` — WAF 挑战思路参考 [823302271/custom-clash](https://github.com/823302271/custom-clash) 与 [wujunjr/anyrouter-checkin](https://github.com/wujunjr/anyrouter-checkin)；固定混淆表已被站点随机化，本仓库改为沙盒 eval 现算
 - `agentrouter` — 基于 [ddgksf2013/Scripts](https://github.com/ddgksf2013/Scripts) 的 `agentrouter_checkin.js` 改造，新增 Cookie 模式、验证码页判读与请求头补全
 - `runanytime` — PoW 求解与站点适配参考 [Auroraee/checkin-pilot](https://github.com/Auroraee/checkin-pilot)、[wangwingzero/sign-in](https://github.com/wangwingzero/sign-in)
+- `nodeseek-jump` — 思路同常见的 Telegram 重定向插件（`t.me` → `tg://resolve`），换成 NS Connect 的 scheme；深链格式与 App 侧实现见 [tyrad/nodeseek#19](https://github.com/tyrad/nodeseek/pull/19)
