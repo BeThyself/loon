@@ -19,6 +19,22 @@
 4. 用 Safari 打开 runanytime.hxi.me 登录（该站需要过一次 Turnstile）
 5. 登录成功后通知：`✅ 已投递并签到成功` 或 `ℹ️ Cookie 已投递` + 服务器返回的日志
 
+## 这个站的登录态是什么（v6）
+
+站点不用 Cookie 登录，前端把两样东西放在 localStorage：
+
+- **access token**：JWT，**只活 15 分钟**
+- **sid**（会话 ID）：刷新接口 `POST /api/user/auth/refresh` 用它换新 token，没有 body，sid 放在 `X-Auth-Session` 请求头里
+
+Loon 读不到 localStorage，所以按两条路抓：
+
+| 规则 | 抓什么 | 用途 |
+|---|---|---|
+| `request` | `Authorization: Bearer`、`Cookie`、`X-Auth-Session` | 拿到当前可用的短期 token，立刻能签到 |
+| `response`（`/api/user/auth/refresh`） | 回包里的 `data.session.sid` + `data.access_token` | 拿到**真正的会话 ID**，服务器可自行续期 |
+
+**注意**：JWT 里的 `sid` 声明不可用于刷新（实测拿它请求一律 401），只有登录/刷新响应里的 `session.sid` 才行。
+
 ## 通知含义
 
 | 通知 | 含义 |
