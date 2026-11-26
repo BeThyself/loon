@@ -1,5 +1,5 @@
 #!name=NodeSeek 链接跳 NS Connect
-#!desc=防循环版：外部打开 NodeSeek 帖子时跳 NS Connect；放行带站内 Referer 的正文请求，避免 App 加载失败。需 v1.5.0+。站内浏览不强制跳转，停用插件可恢复网页。
+#!desc=防循环 v2：只放行站点根 Referer，保护 App 正文加载；帖子 Referer 仍跳 NS Connect，修复 Safari 不弹跳转。需 v1.5.0+；停用插件可恢复网页。
 #!openUrl=https://github.com/BeThyself/loon/blob/main/nodeseek-jump/README.md
 #!author=thyself
 #!tag=功能增强
@@ -22,13 +22,14 @@
 # ===================================================================
 
 [Rewrite]
-# NS Connect 的 HiddenWebViewHTMLClient 通过 WebRequestFingerprint 设置站内 Referer。
-# 仅 GET 且 Referer 缺失/非站内时跳转；站内 Referer 全部放行，避免正文被再次 302。
-# 这不是进程识别：若其它插件删除/改写 Referer，防循环可能失效；不可与旧无条件规则并存。
+# NS Connect 的 HiddenWebViewHTMLClient 固定设置根 Referer：https://www.nodeseek.com/。
+# 仅保护根地址（可无尾斜杠，兼容子域名/端口）；帖子/列表 Referer 仍允许 GET 跳转。
+# 用户实测 Safari Referer 为 /post-1081249-1，不能把所有站内 Referer 都放行。
+# 这不是进程识别：根 Referer 浏览器也放行；App 若改用帖子 Referer 或被删头仍可能误拦。不可与旧规则并存。
 # 带页码：/post-139218-3 → nsconnect://post/139218-3
-request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?.*)?$/i as paged && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?(?:[\/?#]|$)).*$/i) then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?.*)?$/i as paged && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?\/?$).*$/i) then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
 # 不带页码：/post-139218 → nsconnect://post/139218
-request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?.*)?$/i as single && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?(?:[\/?#]|$)).*$/i) then redirect(302, "nsconnect://post/${single.2}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?.*)?$/i as single && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?\/?$).*$/i) then redirect(302, "nsconnect://post/${single.2}")
 
 [MITM]
 hostname = nodeseek.com, www.nodeseek.com

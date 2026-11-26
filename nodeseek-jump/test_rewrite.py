@@ -57,12 +57,24 @@ class RewriteTests(unittest.TestCase):
 
     def test_native_body_requests_are_not_redirected(self):
         for ref in ['https://www.nodeseek.com/', 'https://nodeseek.com/',
-                    'https://www.nodeseek.com/post-1081237-1',
                     'https://www.nodeseek.com', 'https://sub.nodeseek.com/',
                     'HTTPS://WWW.NODESEEK.COM:443/']:
             with self.subTest(referer=ref):
                 self.assertIsNone(redirect('https://www.nodeseek.com/post-1081237-1', {'referer': ref}))
                 self.assertIsNone(redirect('https://nodeseek.com/post-1081237', {'referer': ref}))
+
+    def test_browser_post_referer_still_redirects(self):
+        # 用户实测：TG→Safari 的请求带帖子 URL，而不是站点根地址。
+        for ref in ['https://www.nodeseek.com/post-1081249-1',
+                    'https://www.nodeseek.com/post-1081237-1',
+                    'https://nodeseek.com/page-1',
+                    'https://www.nodeseek.com/?sortBy=replyTime',
+                    'https://sub.nodeseek.com/post-42-2']:
+            with self.subTest(referer=ref):
+                self.assertEqual(redirect('https://www.nodeseek.com/post-1081237-1', {'Referer': ref}),
+                                 'nsconnect://post/1081237-1')
+                self.assertEqual(redirect('https://nodeseek.com/post-1081237', {'Referer': ref}),
+                                 'nsconnect://post/1081237')
 
     def test_pages_queries_case(self):
         for source, target in [

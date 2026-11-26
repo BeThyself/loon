@@ -15,20 +15,21 @@ NS Connect 支持 `nsconnect://` scheme，但当时检查的 App 源码没有 As
 
 Safari 收到 302 后通常会提示「在 NS Connect 中打开」；其它内置浏览器可能限制自定义 scheme。
 
-## 2026-11-26 防循环修复
+## 2026-11-26 防循环 v2
 
-旧规则只看 URL，App 自己抓取正文也会再次命中并收到 302，存在导致「帖子加载失败」的冲突。
+最初的无条件规则会再次拦截 App 的正文请求。第一版防循环把所有站内 Referer 放行，但用户真机反馈：TG → Safari 后请求带 `Referer: https://www.nodeseek.com/post-1081249-1`，没有命中 Rewrite。这证明第一版保护范围过宽，并不代表 Safari 拒绝 scheme。
 
-源码中 `NodeSeekService.loadPostDetail` 请求帖子网页，`HiddenWebViewHTMLClient.get` 调用 `WebRequestFingerprint.applyHTMLHeaders`，固定设置站内 `Referer`。新版据此只对 **GET 且 Referer 缺失、为空或非 NodeSeek 站内** 的帖子请求跳转，带站内 Referer 的请求全部放行。判定域名含子域名和端口，不误把 `nodeseek.com.example.org` 当作站内。
+源码中 `NodeSeekService.loadPostDetail` → `HiddenWebViewHTMLClient.get` → `WebRequestFingerprint.applyHTMLHeaders` 固定设置根地址 `https://www.nodeseek.com/`，不是帖子地址。v2 据此 **仅放行根地址 Referer**；GET 帖子请求只要 Referer 不是根地址就允许跳转，包括站内帖子/列表 Referer。根地址兼容无尾斜杠、子域名与端口，锚定整个值，不误把帖子地址当根。
 
 | 场景 | 行为 |
 |---|---|
-| TG → Safari / 地址栏打开，Referer 缺失或非站内 | 302 到 NS Connect |
+| TG → Safari / 地址栏打开，Referer 缺失、为空或外部地址 | 302 到 NS Connect |
+| Safari 带 `https://www.nodeseek.com/post-1081249-1` 等帖子/列表 Referer | 302 到 NS Connect |
 | NS Connect 加载正文，Referer 为 `https://www.nodeseek.com/` | 放行，正常请求站点 |
-| Safari 在 NodeSeek 网页里站内翻帖，带站内 Referer | 保留网页，不强制跳 App |
+| 浏览器也带根地址 Referer | 放行，不跳 App（保守保护） |
 | POST 或其它非 GET | 放行 |
 
-这不是精确的 App 进程识别。若其他插件删除或改写 App 的 Referer，保护可能失效；某些浏览器携带站内 Referer 时会选择不跳转。宁可少跳一次，也不应阻断正文。App 自定义 UA 也包含 Safari，不能用 UA 简单区分。
+这不是精确的 App 进程识别。若 App 改用帖子 Referer，或其它插件删除/改写 App 的 Referer，仍可能误拦；浏览器与 App 请求头相同时无法靠此规则区分。App 自定义 UA 也包含 Safari，不能用 UA 简单区分。
 
 已做本地条件/替换模拟和 Loon 静态校验；尚待用户真机验证「TG → Safari → App → 正文」完整链路。
 
@@ -44,16 +45,16 @@ Safari 收到 302 后通常会提示「在 NS Connect 中打开」；其它内�
 1. Loon → 配置 → 插件 → 添加：
    `https://raw.githubusercontent.com/BeThyself/loon/main/nodeseek-jump/nodeseek-jump.lpx`
 2. 打开 MitM，确认 Loon 根证书已安装并信任。插件已声明 `hostname = nodeseek.com, www.nodeseek.com`，证书不受信任时看不到 HTTPS 路径，规则永远不命中。
-3. **更新现有安装时先手动更新插件配置**（不只是切换启用开关）；若界面没有更新入口，删除旧插件后按同一地址重新添加。确认描述出现「防循环版」、日期为 `2026-11-26`，规则中含 `Referer`。只保留一份，删除此前手动复制到本地复写的旧无条件规则。
+3. **更新现有安装时先手动更新插件配置**（不只是切换启用开关）；若界面没有更新入口，删除旧插件后按同一地址重新添加。确认描述出现「防循环 v2」、日期为 `2026-11-26`，规则中含 `Referer`。只保留一份，删除此前手动复制到本地复写的旧无条件规则。
 4. 要临时恢复网页打开，在 Loon 里停用该插件即可。更新后回 TG 重点原链接，再确认 App 正文能加载、翻页正常。
 
 ## 排查
 
 | 现象 | 原因 |
 |---|---|
-| 点链接仍是网页 | 插件未更新/未启用、MitM/证书问题，或请求带站内 Referer 被有意放行 |
+| 点链接仍是网页 | 插件未更新/未启用、MitM/证书问题，或请求带根地址 Referer 被有意放行；若是帖子 Referer，应更新到 v2 |
 | 跳到 App 但停在首页 | 检查已安装版本是否支持 `nsconnect://post`，不能仅凭 GitHub Release 判断 TF 已分发 |
-| App 进了帖子页但加载失败 | 检查仍否存在旧无条件规则；Loon 中看 App 正文请求是否被重定向。新版应放行站内 Referer；若仍失败再查登录/站点验证/网络 |
+| App 进了帖子页但加载失败 | 检查仍否存在旧无条件规则；Loon 中看 App 正文请求是否被重定向。v2 应放行根地址 Referer；若仍失败再查登录/站点验证/网络 |
 | Safari 出现「无法打开页面」 | 确认 App 已安装及浏览器允许自定义 scheme |
 | 楼层没定位 | 插件带帖子 ID 和页码，不主动传递 HTTP 请求不包含的 `#fragment` 楼层 |
 
@@ -65,7 +66,7 @@ Safari 收到 302 后通常会提示「在 NS Connect 中打开」；其它内�
 python3 nodeseek-jump/test_rewrite.py
 ```
 
-覆盖外部/空 Referer、站内/子域名/端口 Referer、非 GET、页码与 query、相似恶意域名和非帖子 URL。另需用 `loon-dev` 的 `loon_lint.py` 校验插件语法。
+覆盖外部/空 Referer、根地址/子域名/端口保护、用户实测帖子 Referer 仍跳转、非 GET、页码与 query、相似恶意域名和非帖子 URL。另需用 `loon-dev` 的 `loon_lint.py` 校验插件语法。
 
 ## 来源与致谢
 
