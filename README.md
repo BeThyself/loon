@@ -17,6 +17,7 @@
 | AgentRouter 每日签到 | [`agentrouter/agentrouter-checkin.lpx`](agentrouter/agentrouter-checkin.lpx) | Cookie / 密码双模式，每天 09:00 签到（本机已改由服务器跑，插件留作备用） | cron + 首次登录网页 | 本仓库 |
 | 随时跑路 刷新凭证 v8 | [`runanytime/runanytime-capture.lpx`](runanytime/runanytime-capture.lpx) | 从成功认证响应独立保存刷新 Cookie，防止普通请求覆盖；捕获端仅保存；服务器每天北京时间 09:02～09:12 自动续期并签到，隔日稳定性观察中 | 登录/刷新成功响应 + 手动自检 | 本仓库源码 / 自家 VPS 托管 |
 | NodeSeek 链接跳 App | [`nodeseek-jump/nodeseek-jump.lpx`](nodeseek-jump/nodeseek-jump.lpx) | 防循环 v2：仅放行根地址 Referer 保护正文；帖子 Referer 仍可 302 到 NS Connect（需 v1.5.0+） | 非根 Referer 的 GET 帖子链接 | 内嵌于 lpx |
+| 星驰 API 登录签到 | [`xingchi/xingchi.loon.lpx`](xingchi/xingchi.loon.lpx) | 网页捕获登录会话，必要时刷新 Token，每天手机本地时间 09:00 查询并签到 | cron + 登录/刷新捕获 | 本仓库，上游 JS 原样迁移 |
 
 ## 安装
 
@@ -39,6 +40,7 @@ https://raw.githubusercontent.com/BeThyself/loon/main/<目录>/<插件文件>
 | AgentRouter | `agentrouter.org` |
 | 随时跑路 v8 | `runanytime.hxi.me`（仅登录/刷新响应） |
 | NodeSeek 跳转 | `nodeseek.com, www.nodeseek.com` |
+| 星驰 API | `xingchiapi.com` |
 
 ## 目录结构
 
@@ -55,6 +57,8 @@ runanytime/   runanytime-capture.lpx · runanytime-capture.js
               test_capture_v8.js · test_auth_backend.py · test_auth_store.py
               test_http_v8.py · test_receiver_v8.py · test_receiver_edges.py · test_refresh_limits.py
 nodeseek-jump/ nodeseek-jump.lpx · test_rewrite.py
+xingchi/      xingchi.loon.lpx · xingchi.loon.js · THIRD_PARTY_LICENSE.txt
+              tests/xingchi.test.mjs（安装、参数与验证范围见目录 README）
 ```
 
 ## 随时跑路服务端配套
@@ -75,6 +79,8 @@ nodeseek-jump/ nodeseek-jump.lpx · test_rewrite.py
 ## 来源与致谢
 
 业务逻辑版权归各上游作者，本仓库只做 Loon 适配与修复：
+
+- `xingchi` — [ZHT0711/xingchi-api-loon-egern](https://github.com/ZHT0711/xingchi-api-loon-egern)，固定上游 `e8ec098a1ee379313276b959b2ba098423ff441a`；JS 原样迁移，插件仅改署名、日期、来源注释和三处托管地址，保留第三方许可；安装说明见 [目录 README](xingchi/README.md)
 
 - `bili-theme` — [chaoscard/bili-theme](https://github.com/chaoscard/bili-theme)，本仓库为镜像，脚本逐字节一致，仅 `script-path` 改指本仓库
 - `QuickSearch` — 可莉 Kelee 的 `QuickSearch.lpx`（https://kelee.one/Tool/Loon/Lpx/QuickSearch.lpx ），原版 7 条命令原样保留，另外补了「关键词在前」的语序与若干 App 内搜索

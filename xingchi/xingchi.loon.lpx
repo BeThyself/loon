@@ -1,0 +1,25 @@
+#!name=星驰 API 登录签到
+#!desc=导入插件后自动下载配套脚本；网页登录一次获取会话，每日 09:00 自动刷新登录并签到。
+#!author=thyself
+#!date=2026-11-27
+# 来源：ZHT0711/xingchi-api-loon-egern @ e8ec098a1ee379313276b959b2ba098423ff441a
+# 上游插件署名 Codex；脚本参考 @773075692 与 MaYIHEI，许可见 THIRD_PARTY_LICENSE.txt。
+# 本仓库仅迁移托管地址与插件署名，配套 JS 业务逻辑保持原样。
+#!homepage=https://xingchiapi.com/
+#!loon_version=3.5.1(988)
+#!tag=签到
+
+[Argument]
+action = select,"checkin","login","clear",tag=运行模式,desc=checkin 为验证登录并签到；login 为仅验证登录；clear 为清除本机凭据
+access_token = input,"",tag=Access Token（选填）,desc=通常无需填写；开启插件后在手机浏览器登录即可自动获取
+refresh_token = input,"",tag=Refresh Token（选填）,desc=手动导入时同时填写以支持自动刷新；仅保存在本机插件设置
+debug = switch,false,tag=调试模式,desc=仅记录状态和签到判定，不输出令牌
+
+[Script]
+# 与参考插件一致，使用远程脚本地址；无需手动导入 JS。
+request if ${url} ~= /^https:\/\/xingchiapi\.com\/api\/v1\/auth\/me(?:\?|$)/ then script("https://raw.githubusercontent.com/BeThyself/loon/main/xingchi/xingchi.loon.js") with tag="星驰 API 获取登录请求", timeout=10, requires_body=false
+response if ${url} ~= /^https:\/\/xingchiapi\.com\/api\/v1\/auth\// then script("https://raw.githubusercontent.com/BeThyself/loon/main/xingchi/xingchi.loon.js") with tag="星驰 API 获取登录响应", timeout=10, requires_body=true
+cron "0 9 * * *" then script("https://raw.githubusercontent.com/BeThyself/loon/main/xingchi/xingchi.loon.js", {${action}, ${access_token}, ${refresh_token}, ${debug}}) with tag="星驰 API 每日登录签到", timeout=180
+
+[MITM]
+hostname = xingchiapi.com
