@@ -1,5 +1,5 @@
 #!name=NodeSeek 链接跳 NS Connect
-#!desc=在 Safari 或其它 App 点 NodeSeek 帖子链接时，直接改用 NS Connect 打开。需要 App 支持 nsconnect://post 深链（v1.5.0 起）。要临时停用就关掉这个插件。
+#!desc=防循环版：外部打开 NodeSeek 帖子时跳 NS Connect；放行带站内 Referer 的正文请求，避免 App 加载失败。需 v1.5.0+。站内浏览不强制跳转，停用插件可恢复网页。
 #!openUrl=https://github.com/BeThyself/loon/blob/main/nodeseek-jump/README.md
 #!author=thyself
 #!tag=功能增强
@@ -7,7 +7,7 @@
 #!system_version=15
 #!loon_version=3.5.1(978)
 #!homepage=https://github.com/BeThyself/loon/tree/main/nodeseek-jump
-#!date=2026-11-25
+#!date=2026-11-26
 
 # ===================================================================
 # 原理：把帖子网页 302 到 App 的自定义 scheme，由系统提示「在 NS Connect 中打开」。
@@ -22,10 +22,13 @@
 # ===================================================================
 
 [Rewrite]
+# NS Connect 的 HiddenWebViewHTMLClient 通过 WebRequestFingerprint 设置站内 Referer。
+# 仅 GET 且 Referer 缺失/非站内时跳转；站内 Referer 全部放行，避免正文被再次 302。
+# 这不是进程识别：若其它插件删除/改写 Referer，防循环可能失效；不可与旧无条件规则并存。
 # 带页码：/post-139218-3 → nsconnect://post/139218-3
-request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?.*)?$/i as paged then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)-([0-9]+)(?:\/)?(?:\?.*)?$/i as paged && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?(?:[\/?#]|$)).*$/i) then redirect(302, "nsconnect://post/${paged.2}-${paged.3}")
 # 不带页码：/post-139218 → nsconnect://post/139218
-request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?.*)?$/i as single then redirect(302, "nsconnect://post/${single.2}")
+request if ${url} ~= /^https?:\/\/(www\.)?nodeseek\.com\/post-([0-9]+)(?:\/)?(?:\?.*)?$/i as single && ${request.method} == "GET" && (${request.header['Referer']} == null || ${request.header['Referer']} ~= /^(?!https?:\/\/(?:[a-z0-9-]+\.)*nodeseek\.com(?::[0-9]+)?(?:[\/?#]|$)).*$/i) then redirect(302, "nsconnect://post/${single.2}")
 
 [MITM]
 hostname = nodeseek.com, www.nodeseek.com
