@@ -51,6 +51,17 @@ def _cookie_pair(raw):
     if not k.strip() or "\r" in pair or "\n" in pair: return ""
     return k.strip() + "=" + v.strip()
 
+def retry_after_seconds(value, now=None):
+    """Retry-After accepts integer seconds or an HTTP date (RFC 9110)."""
+    from email.utils import parsedate_to_datetime
+    now = time.time() if now is None else now
+    try:
+        value = str(value or '').strip()
+        seconds = int(value) if value.isdigit() else parsedate_to_datetime(value).timestamp() - now
+        return max(0, int(math.ceil(seconds)))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -105,10 +116,13 @@ class Probe:
         data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
         if method == "POST": headers["Content-Type"] = "application/json"
         req = request.Request(self.base + path, data=data, method=method, headers=headers)
+        self.last_response_meta = {}
         try:
             with self.opener.open(req, timeout=TIMEOUT) as r:
+                self.last_response_meta = {"retry_after_seconds": retry_after_seconds(r.headers.get("Retry-After"))}
                 status, raw = r.status, r.read(MAX_BODY + 1)
         except error.HTTPError as e:
+            self.last_response_meta = {"retry_after_seconds": retry_after_seconds(e.headers.get("Retry-After"))}
             status, raw = e.code, e.read(MAX_BODY + 1)
         except Exception:
             return 0, {}
@@ -149,7 +163,11 @@ class Probe:
         status, body = self._call("/api/user/auth/refresh", "POST", token="")
         tok = _token(body)
         if status != 200 or not _ok(body) or not tok:
-            result = {"ok": False, "code": "refresh_unauthorized" if status in (401, 403) else "refresh_failed", "status": status or None}
+            failure_code = "refresh_rate_limited" if status == 429 else ("refresh_unauthorized" if status in (401, 403) else "refresh_failed")
+            result = {"ok": False, "code": failure_code, "status": status or None}
+            retry = getattr(self, "last_response_meta", {}).get("retry_after_seconds")
+            if status == 429 and retry is not None:
+                result["retry_after_seconds"] = retry
             with auth_store.locked(lock_path):
                 current = auth_store.read_config(cfg_path)
                 if all(current.get(k) == self.cfg.get(k) for k in ("new_api_refresh", "sid", "uid", "token", "auth_observed_at")):

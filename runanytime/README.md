@@ -45,7 +45,9 @@ Loon 捕获 runanytime.hxi.me 成功认证响应中的刷新凭证，再投递�
 
 用户当天已手动签到，已按账号标记今日完成，避免启用 `Persistent=true` timer 后补跑。定时已应用户要求开启，首次隔日执行将在 **2026-11-26 北京时间约 09:08**；实际随机计划可用 `systemctl list-timers runanytime.timer` 查看。
 
-每次执行先验证 access token；有效则直接签到，过期则尝试一次 refresh、落盘并验证后签到。刷新失败停止并发站点名通知，不盲目重试。无需手机打开网页或 Minis；但刷新凭证仍可能撤销，不能承诺永久有效。
+每次执行先验证 access token；有效则直接签到，过期则尝试 refresh、落盘并验证后签到。刷新接口遇到 429 会遵守 `Retry-After`，没有该头时按 60 秒、180 秒有限退避，最多三次；401/403 或其他错误立即停止并按真实阶段通知，不会把刷新限流误报成登录态失效。无需手机打开网页或 Minis；但刷新凭证仍可能撤销，不能承诺永久有效。
+
+2026-11-26：首次定时执行遇到 refresh HTTP 429，原通知错误显示为旧 self 的 401；随后以同一刷新凭证补跑成功，签到成功，余额从 $100 增至 $125。
 
 后续验收/观察项目：
 
@@ -78,11 +80,12 @@ Loon 捕获 runanytime.hxi.me 成功认证响应中的刷新凭证，再投递�
 - `test_http_v8.py`：真实本地 HTTP Cookie 轮换和路径测试。
 - `test_receiver_v8.py`：接收端鉴权、去重及只保存行为测试。
 - `test_receiver_edges.py`：残缺凭证、Cookie 注入与未来时间拒绝测试。
+- `test_refresh_limits.py`：429 分类、Retry-After、有限退避和通知真实状态测试。
 
 ```sh
 node --check runanytime-capture.js
 node test_capture_v8.js
-python3 -m unittest -v test_auth_backend test_auth_store test_http_v8 test_receiver_v8 test_receiver_edges
+python3 -m unittest discover -v
 python3 /var/minis/skills/loon-dev/scripts/loon_lint.py runanytime-capture.lpx
 # 以下在已配置的服务器目录中显式执行；不会发起签到：
 python3 auth_probe.py --verify

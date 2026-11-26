@@ -101,10 +101,28 @@ def refresh_token(sess, cfg):
     result=sess.refresh(CFG_PATH,LOCK_PATH)
     if not result.get("ok"):
         log("refresh失败 status=%s code=%s" % (result.get("status"),result.get("code")))
-        return False
+        return result
     with auth_store.locked(LOCK_PATH): cfg.update(auth_store.read_config(CFG_PATH))
     sess.cfg=cfg.copy()
-    return True
+    return result
+
+
+def refresh_with_backoff(sess, cfg, wait=None):
+    """429 最多退避两次；401/403 或其它错误立即停止。"""
+    wait = wait or (lambda seconds: time.sleep(seconds))
+    result = refresh_token(sess, cfg)
+    for attempt in range(2):
+        if result.get("ok") or result.get("status") != 429 or result.get("code") != "refresh_rate_limited":
+            return result
+        delay = result.get("retry_after_seconds")
+        if delay is None:
+            delay = (60, 180)[attempt]
+        if delay > 300:
+            return result
+        log("refresh遇到429，等待%s秒后重试（第%s次）" % (delay, attempt + 1))
+        wait(delay)
+        result = refresh_token(sess, cfg)
+    return result
 
 
 STATE_PATH = os.path.join(HERE, "state.json")
@@ -182,15 +200,21 @@ def main():
 
     # 0. 用现有 access token 优先验证；仅失效且具备 refresh Cookie 时显式续期。
     status, info = sess.call("/api/user/self")
-    refreshed = False
     if status != 200 or not (isinstance(info,dict) and info.get("success",True)):
         if cfg.get("new_api_refresh") and status in (200,401):
-            log("self验证失败，尝试一次refresh")
-            if refresh_token(sess,cfg):
-                refreshed=True
-                status,info=sess.call("/api/user/self")
+            log("self验证失败，尝试refresh（429时有限退避）")
+            result = refresh_with_backoff(sess, cfg)
+            if not result.get("ok"):
+                failed_status = result.get("status")
+                title = "⚠️ 刷新接口限流" if failed_status == 429 else ("❌ 刷新凭证被拒" if failed_status in (401,403) else "❌ 续期失败")
+                notify(cfg, title, "refresh HTTP %s · %s；本次停止，凭证已保留。%s" % (
+                    failed_status or "network", result.get("code", "refresh_failed"),
+                    "无需仅因429重新登录。" if failed_status == 429 else "请核对续期状态，不要反复重试。"))
+                return 1
+            # refresh() has already verified the new token through self.
+            status, info = sess.call("/api/user/self")
         if status != 200 or not (isinstance(info,dict) and info.get("success",True)):
-            notify(cfg,"❌ 登录态失效","HTTP %s；停止签到，请显式运行 auth_probe.py --verify 或 --refresh 后更新浏览器凭证" % (status or "network"))
+            notify(cfg,"❌ 账号验证失败","self HTTP %s；停止签到，未清除凭证。" % (status or "network"))
             return 1
 
     data = info.get("data") or {}

@@ -53,7 +53,7 @@ agentrouter/  agentrouter-checkin.lpx · agentrouter_checkin.js
 runanytime/   runanytime-capture.lpx · runanytime-capture.js
               auth_store.py · auth_probe.py · receiver.py · checkin.py
               test_capture_v8.js · test_auth_backend.py · test_auth_store.py
-              test_http_v8.py · test_receiver_v8.py · test_receiver_edges.py
+              test_http_v8.py · test_receiver_v8.py · test_receiver_edges.py · test_refresh_limits.py
 nodeseek-jump/ nodeseek-jump.lpx · test_rewrite.py
 ```
 
@@ -62,7 +62,7 @@ nodeseek-jump/ nodeseek-jump.lpx · test_rewrite.py
 - [`runanytime/auth_store.py`](runanytime/auth_store.py)：刷新 Cookie 独立保存、文件锁与原子写。
 - [`runanytime/auth_probe.py`](runanytime/auth_probe.py)：显式验证登录状态或刷新凭证，不签到、不发 TG。
 - [`runanytime/receiver.py`](runanytime/receiver.py)：鉴权接收 v8 凭证，目前只保存。
-- [`runanytime/checkin.py`](runanytime/checkin.py)：PoW 签到与北京时间按账号去重；已恢复每天 09:02～09:12 定时，token 失效时自动刷新。
+- [`runanytime/checkin.py`](runanytime/checkin.py)：PoW 签到与北京时间按账号去重；已恢复每天 09:02～09:12 定时，token 失效时自动刷新；刷新限流有限退避，不再误报旧 self 状态。
 - `test_capture_v8.js`、`test_auth_backend.py`、`test_auth_store.py`、`test_http_v8.py`、`test_receiver_v8.py`、`test_receiver_edges.py`：脱敏模拟/本地 HTTP 回归测试，运行方式见 [目录 README](runanytime/README.md)。
 
 ## 通用说明
